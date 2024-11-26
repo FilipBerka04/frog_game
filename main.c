@@ -12,12 +12,26 @@
 #define LEFT (position_t){ 0, -1 }
 #define RIGHT (position_t){ 0, 1 }
 
+#define MAP_WIDTH 31
+#define MAP_HEIGHT 40
+#define MAP_POSITION ((position_t){ 1, COLS/2 - 31/2 })
+
 //************************************************
 //*********************ENUMS**********************
 //************************************************
 
+typedef enum {
+  GRASS,
+  ROAD_LR,
+  ROAD_RL,
+}lane_t;
 
 
+typedef enum {
+  BOUNCING,
+  WRAPPING,
+  DISAPPEARING,
+}carBehaviour_t;
 
 
 //************************************************
@@ -40,136 +54,230 @@ typedef struct{
   position_t position;
   int width;
   int height;
-  border_t *border;
+  border_t border;
+  lane_t *lanes;
+  int roadCount;
 }map_t;
 
 
 typedef struct {
   position_t position;
-  const int delayBetweenMoves;
+  int delayBetweenMoves;
   int regeneration;
-}frog_t;
+}player_t;
 
 
 typedef struct {
-
-}badCar_t;
-
-
-typedef struct {
-
-}goodCar_t;
+  position_t position;
+  int length;
+  int delayBetweenMoves;
+  int regeneration;
+  char good;
+  carBehaviour_t carBehaviour;
+}car_t;
 
 
 typedef struct {
 
 }stork_t;
 
+
+typedef struct {
+  map_t map;
+  player_t player;
+  car_t* cars;
+  char stop;
+}game_t;
+
 //************************************************
-//******************INITIALIZORS******************
+//**********************INITS*********************
 //************************************************
 
-map_t* initMap(int mapWidth, int mapHeight, int x, int y){
-  map_t* map = (map_t*)malloc(sizeof(map_t));
-  map->width = mapWidth;
-  map->height = mapHeight;
-  map->position = (position_t){x, y};
-  map->border = (border_t*)malloc(sizeof(border_t));
-  map->border->borderChar = '#';
-  map->border->position = (position_t){x-1, y-1};
+
+lane_t* initLanes(map_t *map) {
+  lane_t *lanes = (lane_t*)malloc(sizeof(lane_t) * map->height);
+  lanes[0] = lanes[map->height - 1] = GRASS;
+  for (int i = 1; i < map->height-1; i++) {
+    if (!(i%4)) {
+      lanes[i] = ROAD_LR;
+      map->roadCount++;
+    }
+    else
+    if (!(i%7)) {
+      lanes[i] = ROAD_RL;
+      map->roadCount++;
+    }
+    else
+      lanes[i] = GRASS;
+  }
+  return lanes;
+}
+
+
+car_t* initCars(const int numCars) {
+  car_t *cars = (car_t*)malloc(sizeof(car_t) * numCars);
+  for (int i = 0; i < numCars; i++) {
+    cars[i] = (car_t){
+      .position = MAP_POSITION,
+      .good = 0,
+      .length = 1,
+      .regeneration = 0,
+      .carBehaviour = WRAPPING,
+      .delayBetweenMoves = 30
+    };
+  }
+  return cars;
+}
+
+map_t initMap(const int mapWidth, const int mapHeight, const position_t position){
+  map_t map;
+  map.width = mapWidth;
+  map.height = mapHeight;
+  map.position = position;
+  map.border.borderChar = '#';
+  map.border.position = (position_t){position.y-1, position.x-1};
+  map.lanes = initLanes(&map);
   return map;
 }
 
+
+player_t initPlayer(const position_t position, const int delay) {
+  return (player_t){ .position = position, .delayBetweenMoves = delay, .regeneration = 0 };
+}
+
+
+game_t initGame() {
+  game_t game;
+  game.map = initMap(MAP_WIDTH, MAP_HEIGHT, MAP_POSITION);
+  game.player = initPlayer( (position_t){MAP_HEIGHT-1, MAP_WIDTH/2}, 0);
+  game.cars = initCars(5);
+  game.stop = 0;
+  return game;
+}
 
 //************************************************
 //*******************FUNCTIONS********************
 //************************************************
 
-void printBorder(const map_t* map){
-  for(int x = 0; x < (map->width) + 2; x++){
-    mvaddch(map->border->position.y, map->border->position.x + x, map->border->borderChar);
-    mvaddch(map->border->position.y + map->height + 1, map->border->position.x + x, map->border->borderChar);
+//-----------------printing stuff-----------------
+void printBorder(const map_t map){
+  for(int x = 0; x < (map.width) + 2; x++){
+    mvaddch(map.border.position.y, map.border.position.x + x, map.border.borderChar);
+    mvaddch(map.border.position.y + map.height + 1, map.border.position.x + x, map.border.borderChar);
   }
-  for(int y = 0; y < map->height; y++){
-    mvaddch(map->border->position.y + y + 1, map->border->position.x, map->border->borderChar);
-    mvaddch(map->border->position.y + y + 1, map->border->position.x + map->width + 1, map->border->borderChar);
+  for(int y = 0; y < map.height; y++){
+    mvaddch(map.border.position.y + y + 1, map.border.position.x, map.border.borderChar);
+    mvaddch(map.border.position.y + y + 1, map.border.position.x + map.width + 1, map.border.borderChar);
   }
 }
 
+void printLane(const position_t position, const lane_t lane, const int width) {
+  char ch = ' ';
+  switch(lane) {
+    case GRASS:
+      ch = '.';
+      break;
+    case ROAD_LR:
+      ch = '>';
+      break;
+    case ROAD_RL:
+      ch = '<';
+      break;
+    default:;
+  }
+  for(int x = 0; x < width; x++)
+    mvaddch(position.y, position.x + x, ch);
+}
 
-void printMap(const map_t* map){
+void printMap(const map_t map){
   printBorder(map);
+  for(int y = 0; y < map.height; y++) {
+    printLane((position_t){ map.position.y + y, map.position.x}, map.lanes[y], map.width);
+  }
 }
 
-void printPlayer(const frog_t player, const map_t* map){
-  mvaddch(player.position.y + map->position.y, player.position.x + map->position.x, 'F');
+void printPlayer(const game_t* game){
+  mvaddch(game->player.position.y + game->map.position.y, game->player.position.x + game->map.position.x, 'O');
 }
 
 
-void printScreen(const frog_t player, const map_t* map){
+void printGame(const game_t *game){
   clear();
-  printPlayer(player, map);
-  printMap(map);
-  refresh();
+  printMap(game->map);
+  printPlayer(game);
 }
 
 
-void movePlayer(frog_t* player, position_t move){
-  if(player->regeneration)
+//-----------------control stuff------------------
+void movePlayer(game_t *game, const position_t move){
+  if(game->player.regeneration != 0)
     return;
-  player->position.x = player->position.x + move.x;
-  player->position.y = player->position.y + move.y;
-  player->regeneration = player->delayBetweenMoves;
+  if (
+    game->player.position.x + move.x < 0 ||
+    game->player.position.x + move.x >= game->map.width ||
+    game->player.position.y + move.y < 0 ||
+    game->player.position.y + move.y >= game->map.height
+    )
+    return;
+  game->player.position.x += move.x;
+  game->player.position.y += move.y;
+  game->player.regeneration = game->player.delayBetweenMoves;
 }
 
-void regeneratePlayer(frog_t* player){
+
+void regeneratePlayer(player_t* player){
   if(player->regeneration > 0)
     player->regeneration -= 1;
 }
 
 
-void input(char ch, frog_t* player, char* stop) {
-  switch (ch) {
+void input(const char key, game_t *game) {
+  switch (key) {
     case 'w':
-      movePlayer(player, UP);
+      movePlayer(game, UP);
       break;
     case 's':
-      movePlayer(player, DOWN);
+      movePlayer(game, DOWN);
       break;
     case 'a':
-      movePlayer(player, LEFT);
+      movePlayer(game, LEFT);
       break;
     case 'd':
-      movePlayer(player, RIGHT);
+      movePlayer(game, RIGHT);
       break;
     case 'q':
-      *stop = 1;
+      game->stop = 1;
       break;
+    default:;
   }
+}
+
+void freeGame(const game_t* game) {
+  free(game->map.lanes);
+  free(game->cars);
 }
 
 
 
 
-
 int main() {
+  //basic setup: preparing the ncurses screen, defining timespec for delay between game updates
   initscr();
   clear();
   noecho();
   nodelay(stdscr, 1);
   curs_set(0);
-  struct timespec ts = {0, 10000000};
+  const struct timespec ts = {0, 10000000};
 
-  map_t *map = initMap(31, 40, 1, COLS/2 - 31/2);
-  frog_t player = { .position = {38,16}, .delayBetweenMoves = 30, .regeneration = 0 };
-  char stop = 0;
-  while(!stop){
-    input(getch(), &player, &stop);
+  game_t game = initGame();
+  while(!game.stop) {
+    input(getch(), &game);
 
-    printScreen(player, map);
-    regeneratePlayer(&player);
+    printGame(&game);
+    regeneratePlayer(&game.player);
     nanosleep(&ts, NULL);
   }
+  freeGame(&game);
   clear();
   endwin();
   return 0;
