@@ -7,7 +7,7 @@
 //*******************DEFINES**********************
 //************************************************
 
-#define NUMBER_OF_CARS 13
+#define NUMBER_OF_CARS 5
 
 #define UP (position_t){ -1, 0 }
 #define DOWN (position_t){ 1, 0 }
@@ -15,7 +15,7 @@
 #define RIGHT (position_t){ 0, 1 }
 
 #define MAP_WIDTH 31
-#define MAP_HEIGHT 40
+#define MAP_HEIGHT 20
 #define MAP_POSITION ((position_t){ 1, COLS/2 - 31/2 })
 
 //************************************************
@@ -87,6 +87,7 @@ typedef struct {
   int delayBetweenMoves;
   int regeneration;
   char good;
+  char dead;
   carBehaviour_t behaviour;
   carDirection_t direction;
 }car_t;
@@ -142,16 +143,25 @@ lane_t* initLanes(map_t *map) {
 
 car_t* initCars(const map_t map, const int numCars) {
   car_t *cars = (car_t*)malloc(sizeof(car_t) * NUMBER_OF_CARS);
+  int starting_lanes[NUMBER_OF_CARS];
+  for (int i = 0 , j = 0; i < map.roadCount && j < NUMBER_OF_CARS; ++i) {
+    const int rn = map.roadCount - i;
+    const int rm = NUMBER_OF_CARS - j;
+    if (random() % rn < rm)
+      starting_lanes[j++] = i + 1;
+  }
   for (int i = 0; i < NUMBER_OF_CARS; i++) {
-    const int y = yPositionOfRoad(map, i+1);
-    carBehaviour_t b = (map.lanes[y] == ROAD_LR) ? MOVES_RIGHT : MOVES_LEFT;
+    const int y = yPositionOfRoad(map, starting_lanes[i]);
+    const int x = (int)random() % map.width;
+    const carBehaviour_t b = (map.lanes[y] == ROAD_LR) ? MOVES_RIGHT : MOVES_LEFT;
     cars[i] = (car_t){
-      .position = (position_t){y, (b == MOVES_RIGHT) ? (0) : (map.width - 1)},
+      .position = (position_t){y, x},
       .good = 0,
       .length = 1,
       .regeneration = 0,
-      .behaviour = WRAPPING,
+      .behaviour = (carBehaviour_t)((int)random() % 2),
       .direction = b,
+      .dead = 0,
       .delayBetweenMoves = (int)random()%20 + 5
     };
   }
@@ -229,31 +239,49 @@ void printMap(const map_t map){
 }
 
 
-void printPlayer(const game_t* game){
-  mvaddch(game->player.position.y + game->map.position.y, game->player.position.x + game->map.position.x, 'O');
+void printPlayer(const game_t game){
+  mvaddch(game.player.position.y + game.map.position.y, game.player.position.x + game.map.position.x, 'O');
 }
 
 
-void printCars(const game_t* game) {
+void printCars(const game_t game) {
   for(int i = 0; i < NUMBER_OF_CARS; i++) {
-    mvaddch(game->cars[i].position.y + game->map.position.y, game->cars[i].position.x + game->map.position.x, '%');
+    if (!game.cars[i].dead)
+      mvaddch(game.cars[i].position.y + game.map.position.y, game.cars[i].position.x + game.map.position.x, '%');
   }
 }
 
 
-void printGame(const game_t *game){
+void printGame(const game_t game){
   clear();
-  printMap(game->map);
-  printPlayer(game);
-  printCars(game);
+  if (game.gameState == PLAYING) {
+    printMap(game.map);
+    printPlayer(game);
+    printCars(game);
+    return;
+  }
+  if (game.gameState == WIN) {
+    mvprintw(LINES/2, COLS/2, "YOU WIN");
+    return;
+  }
+  if (game.gameState == LOST) {
+    mvprintw(LINES/2, COLS/2, "YOU LOOSE");
+  }
+  if (game.gameState == STOPPED) {
+    mvprintw(LINES/2, COLS/2, "GAME ABORTED");
+  }
 }
 
 
 //-----------------control stuff------------------
 int checkCrash(const game_t game) {
-  for(int i = 0; i < NUMBER_OF_CARS; i++)
+  for(int i = 0; i < NUMBER_OF_CARS; i++) {
+    if (game.cars[i].dead)
+      return 0;
     if (game.cars[i].position.x == game.player.position.x && game.cars[i].position.y == game.player.position.y)
       return 1;
+  }
+
   return 0;
 }
 
@@ -285,6 +313,15 @@ void moveCars(const game_t *game) {
   for(int i = 0; i < NUMBER_OF_CARS; i++) {
     if (game->cars[i].regeneration != 0)
       continue;
+    if (game->cars[i].dead)
+      continue;
+    if (
+      game->cars[i].behaviour == DISAPPEARING &&
+      (game->cars[i].direction == MOVES_RIGHT && game->cars[i].position.x == game->map.width-1) ||
+      (game->cars[i].direction == MOVES_LEFT && game->cars[i].position.x == 0)
+      )
+      game->cars[i].dead = 1;
+
     if (game->cars[i].direction == MOVES_RIGHT && game->cars[i].position.x == game->map.width-1)
       game->cars[i].position.x = 0;
     else
@@ -342,13 +379,13 @@ void input(const char key, game_t *game) {
 void update(game_t *game) {
   input(getch(), game);
   moveCars(game);
+  regeneratePlayer(&game->player);
+  regenerateCars(game->cars);
   if (checkCrash(*game))
     game->gameState = LOST;
   if (checkWin(*game))
     game->gameState = WIN;
-  printGame(game);
-  regeneratePlayer(&game->player);
-  regenerateCars(game->cars);
+  printGame(*game);
 }
 
 void freeGame(const game_t* game) {
@@ -366,12 +403,16 @@ int main() {
   noecho();
   nodelay(stdscr, 1);
   curs_set(0);
+  srandom(time(NULL));
   const struct timespec ts = {0, 10000000};
 
   game_t game = initGame();
   while(game.gameState == PLAYING) {
     update(&game);
     nanosleep(&ts, NULL);
+  }
+  while (getch() == ERR) {
+
   }
   freeGame(&game);
   clear();
