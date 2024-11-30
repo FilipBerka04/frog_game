@@ -105,6 +105,7 @@ typedef struct {
   char good;
   char dead;
   char careful;
+  char new;
   carBehaviour_t behaviour;
   carDirection_t direction;
 }car_t;
@@ -154,14 +155,6 @@ int* randomUniqueNumbers(const int min, int max, const int number) {
   }
   return numbers;
 }
-
-
-// int readSetting(char* parameter, FILE *file) {
-//   parameter = strcat(parameter, " %d");
-//   char *value;
-//   fscanf(file, parameter, &value);
-//   return (int)strtol(value, NULL, 10);
-// }
 
 //************************************************
 //**********************INITS*********************
@@ -230,11 +223,12 @@ car_t initCar(const map_t map, int yPosition) {
   const car_t car = (car_t){
     .position = (position_t){yPosition, x},
     .good = 0,
-    .length = 1,
+    .length = (int)random() % 4 + 1,
     .regeneration = 0,
-    .behaviour = (carBehaviour_t)((int)random() % 2),
+    .behaviour = (carBehaviour_t)((int)random()%2),
     .direction = b,
     .dead = 0,
+    .new = 1,
     .careful = (char)!(random() % 3),
     .delayBetweenMoves = (int)random()%10 + 5
   };
@@ -287,15 +281,6 @@ settings_t initSettings() {
   fscanf(file, "MAX_CARS_NUMBER %d\n", &settings.maxCarsNumber);// NOLINT(*-err34-c)
   fscanf(file, "ROAD_NUMBER %d\n", &settings.roadNumber);// NOLINT(*-err34-c)
   fclose(file);
-
-  // settings.mapHeight = readSetting("MAP_HEIGHT", file);
-  // settings.mapWidth = readSetting("MAP_WIDTH", file);
-  // settings.playerDelay = readSetting("PLAYER_DELAY", file);
-  // settings.carMinDelay = readSetting("CAR_MIN_DELAY", file);
-  // settings.carMaxDelay = readSetting("CAR_MAX_DELAY", file);
-  // settings.minCarsNumber = readSetting("MIN_CARS_NUMBER", file);
-  // settings.maxCarsNumber = readSetting("MAX_CARS_NUMBER", file);
-
   return settings;
 }
 
@@ -379,6 +364,31 @@ void printPlayer(const game_t game){
 }
 
 
+void printCar(const car_t car, const map_t map) {
+  if (!car.new) {
+    for (int i = 0; i < car.length; i++) {
+      mvaddch(
+        car.position.y + map.position.y,
+        (car.position.x + ((car.direction==MOVES_RIGHT)?(-i):(i)) + map.width)%map.width + map.position.x ,
+        '%');
+    }
+    return;
+  }
+  for (int i = 0; i < car.length; i++) {
+    if (
+      car.direction == MOVES_LEFT &&
+      car.position.x + i >= map.width)
+      break;
+    if (
+      car.direction == MOVES_RIGHT &&
+      car.position.x - i < 0)
+      break;
+    mvaddch(car.position.y + map.position.y, car.position.x + map.position.x + ((car.direction==MOVES_RIGHT)?(-i):(i)), '%');
+  }
+
+}
+
+
 void printCars(const game_t game) {
   for(int i = 0; i < game.settings.maxCarsNumber; i++) {
     if (game.cars[i].dead)
@@ -387,7 +397,7 @@ void printCars(const game_t game) {
       attron(COLOR_PAIR(COLOR_GOOD_CAR));
     else
       attron(COLOR_PAIR(COLOR_BAD_CAR));
-    mvaddch(game.cars[i].position.y + game.map.position.y, game.cars[i].position.x + game.map.position.x, '%');
+    printCar(game.cars[i], game.map);
   }
 }
 
@@ -426,12 +436,39 @@ void printGame(const game_t game){
 
 
 //-----------------control stuff------------------
+char checkCarCollision(const car_t car, const map_t map, const int px) {
+  if (!car.new) {
+    for (int i = 0; i < car.length; i++) {
+      if ((car.position.x + ((car.direction==MOVES_RIGHT)?(-i):(i)) + map.width)%map.width == px)
+      return 1;
+    }
+    return 0;
+  }
+  for (int i = 0; i < car.length; i++) {
+    if (
+      car.direction == MOVES_LEFT &&
+      car.position.x + i >= map.width)
+      return 0;
+    if (
+      car.direction == MOVES_RIGHT &&
+      car.position.x - i < 0)
+      return 0;
+    if (car.position.x + ((car.direction==MOVES_RIGHT)?(-i):(i)) == px)
+      return 1;
+  }
+  return 0;
+}
+
+
 char checkCrash(const game_t game) {
   for(int i = 0; i < game.settings.maxCarsNumber; i++) {
     if (game.cars[i].dead)
       continue;
-    if (game.cars[i].position.x == game.player.position.x && game.cars[i].position.y == game.player.position.y)
+    if (game.cars[i].position.y != game.player.position.y)
+      continue;
+    if (checkCarCollision(game.cars[i], game.map, game.player.position.x))
       return 1;
+
   }
   return 0;
 }
@@ -454,9 +491,27 @@ char checkStop(const car_t car, const position_t playerPosition) {
     )
   )
     return 1;
+  return 0;
+}
 
 
-
+char checkCarAhead(const car_t car, const car_t* cars, const settings_t settings) {
+  for(int i = 0; i < settings.maxCarsNumber; i++) {
+    if (cars[i].dead)
+      continue;
+    if (car.position.y != cars[i].position.y)
+      continue;
+    if (car.position.x == cars[i].position.x)
+      continue;
+    if (
+      car.direction == MOVES_LEFT &&
+      (car.position.x - cars[i].position.x - cars[i].length + settings.mapWidth + 1) % settings.mapWidth < 3)
+      return 1;
+    if (
+      car.direction == MOVES_RIGHT &&
+      (cars[i].position.x - car.position.x - cars[i].length + settings.mapWidth + 1) % settings.mapWidth < 3)
+      return 1;
+  }
   return 0;
 }
 
@@ -465,9 +520,15 @@ char carDisappear(car_t* car, const settings_t settings) {
   if (
       car->behaviour == DISAPPEARING &&
       ((car->direction == MOVES_RIGHT && car->position.x == settings.mapWidth-1) ||
-      (car->direction == MOVES_LEFT && car->position.x == 0))
-      ) {
-    car->dead = 1;
+      (car->direction == MOVES_LEFT && car->position.x == 0))) {
+    if (car->length == 1) {
+      car->dead = 1;
+      car->position.x = -1;
+      car->position.y = -1;
+    }else {
+      car->length--;
+      car->regeneration = car->delayBetweenMoves;
+    }
     return 1;
   }
   return 0;
@@ -496,11 +557,15 @@ void movePlayer(game_t *game, const position_t move){
 
 
 void moveCar(car_t* car, const map_t map, const settings_t settings) {
-  if (car->direction == MOVES_RIGHT && car->position.x == map.width-1)
+  if (car->direction == MOVES_RIGHT && car->position.x == map.width-1) {
     car->position.x = 0;
+    car->new = 0;
+  }
   else
-  if (car->direction == MOVES_LEFT && car->position.x == 0)
+  if (car->direction == MOVES_LEFT && car->position.x == 0) {
     car->position.x = map.width-1;
+    car->new = 0;
+  }
   else
     car->position.x += (car->direction == MOVES_RIGHT) ? 1 : -1;
 
@@ -522,7 +587,8 @@ void moveCars(const game_t* game) {
       continue;
     if (checkStop(car, game->player.position))
       continue;
-
+    if (checkCarAhead(car, game->cars, game->settings))
+      continue;
     moveCar(&game->cars[i], game->map, game->settings);
   }
 }
@@ -625,7 +691,6 @@ int main() {
   game_t game = initGame();
   while(game.gameState == PLAYING) {
     update(&game);
-    mvprintw(0, 0, "%d", game.map.obstacleCount);
     nanosleep(&ts, NULL);
   }
   while (getch() == ERR){}
