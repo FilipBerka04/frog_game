@@ -104,6 +104,7 @@ typedef struct {
   int regeneration;
   char good;
   char dead;
+  char careful;
   carBehaviour_t behaviour;
   carDirection_t direction;
 }car_t;
@@ -234,6 +235,7 @@ car_t initCar(const map_t map, int yPosition) {
     .behaviour = (carBehaviour_t)((int)random() % 2),
     .direction = b,
     .dead = 0,
+    .careful = (char)!(random() % 3),
     .delayBetweenMoves = (int)random()%10 + 5
   };
   return car;
@@ -424,7 +426,7 @@ void printGame(const game_t game){
 
 
 //-----------------control stuff------------------
-int checkCrash(const game_t game) {
+char checkCrash(const game_t game) {
   for(int i = 0; i < game.settings.maxCarsNumber; i++) {
     if (game.cars[i].dead)
       continue;
@@ -435,9 +437,39 @@ int checkCrash(const game_t game) {
 }
 
 
-int checkWin(const game_t game) {
+char checkWin(const game_t game) {
   if (!game.player.position.y)
     return 1;
+  return 0;
+}
+
+
+char checkStop(const car_t car, const position_t playerPosition) {
+  if (
+    car.careful &&
+    (car.position.y - playerPosition.y < 2 && car.position.y - playerPosition.y > -2) &&
+    (
+      (car.direction == MOVES_LEFT && (car.position.x - playerPosition.x) > 0 && (car.position.x - playerPosition.x) < 4) ||
+      (car.direction == MOVES_RIGHT && (playerPosition.x - car.position.x) > 0 && (playerPosition.x - car.position.x) < 4)
+    )
+  )
+    return 1;
+
+
+
+  return 0;
+}
+
+
+char carDisappear(car_t* car, const settings_t settings) {
+  if (
+      car->behaviour == DISAPPEARING &&
+      ((car->direction == MOVES_RIGHT && car->position.x == settings.mapWidth-1) ||
+      (car->direction == MOVES_LEFT && car->position.x == 0))
+      ) {
+    car->dead = 1;
+    return 1;
+  }
   return 0;
 }
 
@@ -463,34 +495,37 @@ void movePlayer(game_t *game, const position_t move){
 }
 
 
-void moveCars(const game_t *game) {
+void moveCar(car_t* car, const map_t map, const settings_t settings) {
+  if (car->direction == MOVES_RIGHT && car->position.x == map.width-1)
+    car->position.x = 0;
+  else
+  if (car->direction == MOVES_LEFT && car->position.x == 0)
+    car->position.x = map.width-1;
+  else
+    car->position.x += (car->direction == MOVES_RIGHT) ? 1 : -1;
+
+    car->regeneration = car->delayBetweenMoves;
+}
+
+
+void moveCars(const game_t* game) {
   for(int i = 0; i < game->settings.maxCarsNumber; i++) {
-    if (game->cars[i].regeneration != 0)
+    const car_t car = game->cars[i];
+    if (car.regeneration != 0)
       continue;
-    if (game->cars[i].dead) {
+    if (car.dead) {
       if (!((int)random()%1000))
         game->cars[i] = initCar(game->map, -1);
       continue;
     }
-    if (
-      game->cars[i].behaviour == DISAPPEARING &&
-      ((game->cars[i].direction == MOVES_RIGHT && game->cars[i].position.x == game->map.width-1) ||
-      (game->cars[i].direction == MOVES_LEFT && game->cars[i].position.x == 0))
-      )
-      game->cars[i].dead = 1;
-    else
-    if (game->cars[i].direction == MOVES_RIGHT && game->cars[i].position.x == game->map.width-1)
-      game->cars[i].position.x = 0;
-    else
-    if (game->cars[i].direction == MOVES_LEFT && game->cars[i].position.x == 0)
-      game->cars[i].position.x = game->map.width-1;
-    else
-      game->cars[i].position.x += (game->cars[i].direction == MOVES_RIGHT) ? 1 : -1;
+    if (carDisappear(&game->cars[i], game->settings))
+      continue;
+    if (checkStop(car, game->player.position))
+      continue;
 
-      game->cars[i].regeneration = game->cars[i].delayBetweenMoves;
+    moveCar(&game->cars[i], game->map, game->settings);
   }
 }
-
 
 void regeneratePlayer(player_t* player){
   if(player->regeneration != 0)
@@ -534,8 +569,8 @@ void input(const char key, game_t *game) {
 
 //this loop gets called repeatedly when the game is running - every update calls other functions to update current state of the game and print the game to the screen
 void update(game_t *game) {
-  input(getch(), game);
   moveCars(game);
+  input(getch(), game);
   regeneratePlayer(&game->player);
   regenerateCars(game);
   if (checkCrash(*game))
