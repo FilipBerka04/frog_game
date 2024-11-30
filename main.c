@@ -16,9 +16,11 @@
 #define COLOR_ROAD 15
 #define COLOR_FINISH 16
 #define COLOR_TEXT 17
+#define COLOR_OBSTACLE 18
 
 #define NUMBER_OF_CARS 10
 #define PLAYER_DELAY 30
+#define MAX_OBSTACLES 50
 
 #define UP (position_t){ -1, 0 }
 #define DOWN (position_t){ 1, 0 }
@@ -83,6 +85,8 @@ typedef struct{
   border_t border;
   lane_t *lanes;
   int roadCount;
+  position_t *obstacles;
+  int obstacleCount;
 }map_t;
 
 
@@ -174,6 +178,33 @@ int yPositionOfRoad(const map_t map, const int n) {
 }
 
 
+position_t* initObstacles(map_t* map, const settings_t settings) {
+  position_t *obstacles = malloc(sizeof(position_t) * MAX_OBSTACLES);
+  int counter = 0;
+  for (int i = 1; i < map->height-1; i++) {
+    if (map->lanes[i] != GRASS)
+      continue;
+
+    int j =  (int)random()%(map->width/3) + 3;
+    int *cols = randomUniqueNumbers(0, map->width - 1, j);
+    for (; j>0; j--) {
+      position_t obstacle;
+      obstacle.y = i;
+      obstacle.x = cols[j-1];
+      obstacles[counter++] = obstacle;
+      if (counter == MAX_OBSTACLES) {
+        free(cols);
+        map->obstacleCount = counter;
+        return obstacles;
+      }
+    }
+    free(cols);
+  }
+  map->obstacleCount = counter;
+  return obstacles;
+}
+
+
 lane_t* initLanes(map_t *map, const settings_t settings) {
   lane_t *lanes = (lane_t*)malloc(sizeof(lane_t) * map->height);
   int *road_lanes = randomUniqueNumbers(1, map->height - 2, settings.roadNumber);
@@ -227,6 +258,7 @@ map_t initMap(const settings_t settings){
   map.border.position = (position_t){map.position.y-1, map.position.x-1};
   map.roadCount = 0;
   map.lanes = initLanes(&map, settings);
+  map.obstacles = initObstacles(&map, settings);
   return map;
 }
 
@@ -323,6 +355,13 @@ void printLane(const position_t position, const lane_t lane, const int width) {
     mvaddch(position.y, position.x + x, ch);
 }
 
+void printObstacles(const game_t game) {
+  for (int i = 0; i < game.map.obstacleCount; i++) {
+    attron(COLOR_PAIR(COLOR_OBSTACLE));
+    mvaddch(game.map.obstacles[i].y + game.map.position.y, game.map.obstacles[i].x + game.map.position.x, '&');
+  }
+}
+
 
 void printMap(const map_t map){
   printBorder(map);
@@ -364,6 +403,7 @@ void printGame(const game_t game){
     printStats(game);
     printPlayer(game);
     printCars(game);
+    printObstacles(game);
     return;
   }
   if (game.gameState == WIN) {
@@ -412,8 +452,13 @@ void movePlayer(game_t *game, const position_t move){
     game->player.position.y + move.y >= game->map.height
     )
     return;
-  game->player.position.x += move.x;
-  game->player.position.y += move.y;
+  int x = game->player.position.x + move.x;
+  int y = game->player.position.y + move.y;
+  for (int i = 0; i < game->map.obstacleCount; i++)
+    if (game->map.obstacles[i].x == x && game->map.obstacles[i].y == y)
+      return;
+  game->player.position.x = x;
+  game->player.position.y = y;
   game->player.regeneration = game->player.delayBetweenMoves;
 }
 
@@ -505,6 +550,7 @@ void update(game_t *game) {
 void freeGame(const game_t* game) {
   free(game->map.lanes);
   free(game->cars);
+  free(game->map.obstacles);
 }
 
 
@@ -519,6 +565,7 @@ void colors() {
   init_pair(COLOR_BORDER, COLOR_WHITE, COLOR_WHITE);
   init_pair(COLOR_FINISH, COLOR_MAGENTA, COLOR_MAGENTA);
   init_pair(COLOR_TEXT, COLOR_WHITE, COLOR_BLACK);
+  init_pair(COLOR_OBSTACLE, COLOR_YELLOW, COLOR_GREEN);
 }
 
 //basic setup of ncurses screen;
@@ -543,7 +590,7 @@ int main() {
   game_t game = initGame();
   while(game.gameState == PLAYING) {
     update(&game);
-    mvprintw(0, 0,"%d", game.settings.mapWidth);
+    mvprintw(0, 0, "%d", game.map.obstacleCount);
     nanosleep(&ts, NULL);
   }
   while (getch() == ERR){}
