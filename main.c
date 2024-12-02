@@ -95,6 +95,7 @@ typedef struct {
   position_t position;
   int delayBetweenMoves;
   int regeneration;
+  int inCar;
 }player_t;
 
 
@@ -223,7 +224,7 @@ car_t initCar(const map_t map, const int yPosition, const settings_t settings) {
   const int x = (b == MOVES_RIGHT) ? 0 : settings.mapWidth - 1;
   const car_t car = (car_t){
     .position = (position_t){yPosition, x},
-    .good = 0,
+    .good = (char)!(random() % 6),
     .length = (int)random() % (settings.carMaxLength - settings.carMinLength + 1) + settings.carMinLength,
     .regeneration = 0,
     .behaviour = (carBehaviour_t)(int)random() % 2,
@@ -272,6 +273,7 @@ player_t initPlayer(const settings_t settings) {
   player.position.y = settings.mapHeight - 1;
   player.delayBetweenMoves = settings.playerDelay;
   player.regeneration = 0;
+  player.inCar = 0;
   return player;
 }
 
@@ -422,8 +424,8 @@ void printGame(const game_t game){
   if (game.gameState == PLAYING) {
     printMap(game.map);
     printStats(game);
-    printPlayer(game);
     printCars(game);
+    printPlayer(game);
     printObstacles(game);
     return;
   }
@@ -469,16 +471,21 @@ char checkCarCollision(const car_t car, const map_t map, const int px) {
 }
 
 
-char checkCrash(const game_t game) {
-  for(int i = 0; i < game.settings.maxCarsNumber; i++) {
-    if (game.cars[i].dead)
+char checkCrash(game_t* game) {
+  for(int i = 0; i < game->settings.maxCarsNumber; i++) {
+    if (game->cars[i].dead)
       continue;
-    if (game.cars[i].position.y != game.player.position.y)
+    if (game->cars[i].position.y != game->player.position.y)
       continue;
-    if (checkCarCollision(game.cars[i], game.map, game.player.position.x))
-      return 1;
-
+    if (!checkCarCollision(game->cars[i], game->map, game->player.position.x))
+      continue;
+    if (game->cars[i].good) {
+      game->player.inCar = i;
+      return 0;
+    }
+    return 1;
   }
+  game->player.inCar = -1;
   return 0;
 }
 
@@ -532,6 +539,7 @@ char carDisappear(map_t* map, car_t* car, const settings_t settings) {
       (car->direction == MOVES_LEFT && car->position.x == 0))) {
     if (map->carCount == settings.minCarsNumber) {
       car->behaviour = WRAPPING;
+      car->new = 0;
       return 0;
     }
     if (car->length == 1) {
@@ -549,24 +557,16 @@ char carDisappear(map_t* map, car_t* car, const settings_t settings) {
 }
 
 
-void movePlayer(game_t *game, const position_t move){
-  if(game->player.regeneration != 0)
-    return;
-  if (
-    game->player.position.x + move.x < 0 ||
-    game->player.position.x + move.x >= game->map.width ||
-    game->player.position.y + move.y < 0 ||
-    game->player.position.y + move.y >= game->map.height
-    )
-    return;
-  int x = game->player.position.x + move.x;
-  int y = game->player.position.y + move.y;
+void movePlayer(game_t *game, const position_t move, char movedByCar){
+  int x = (game->player.position.x + move.x + game->settings.mapWidth) % game->settings.mapWidth;
+  int y = (game->player.position.y + move.y + game->settings.mapHeight) % game->settings.mapHeight;
   for (int i = 0; i < game->map.obstacleCount; i++)
     if (game->map.obstacles[i].x == x && game->map.obstacles[i].y == y)
       return;
   game->player.position.x = x;
   game->player.position.y = y;
-  game->player.regeneration = game->player.delayBetweenMoves;
+  if (!movedByCar)
+    game->player.regeneration = game->player.delayBetweenMoves;
 }
 
 
@@ -609,6 +609,15 @@ void createCar(game_t* game, const int carIndex) {
 }
 
 
+void changeCarSpeed(car_t* car, const settings_t settings) {
+  car->delayBetweenMoves += ((int)random()&2)?5:-5;
+  if (car->delayBetweenMoves < settings.carMinDelay)
+    car->delayBetweenMoves = settings.carMinDelay;
+  if (car->delayBetweenMoves > settings.carMaxDelay)
+    car->delayBetweenMoves = settings.carMaxDelay;
+}
+
+
 void moveCars(game_t* game) {
   for(int i = 0; i < game->settings.maxCarsNumber; i++) {
     const car_t car = game->cars[i];
@@ -625,7 +634,12 @@ void moveCars(game_t* game) {
       continue;
     if (checkCarAhead(car, game->cars, game->settings))
       continue;
+    if (!((int)random()%5))
+      changeCarSpeed(&game->cars[i], game->settings);
     moveCar(&game->cars[i], game->map, game->settings);
+    if (i == game->player.inCar)
+      movePlayer(game, (car.direction == MOVES_LEFT)?(LEFT):(RIGHT), 1);
+
   }
 }
 
@@ -647,19 +661,23 @@ void input(const char key, game_t *game) {
   switch (key) {
     case 'w':
     case 'W':
-      movePlayer(game, UP);
+      if (game->player.regeneration == 0 && game->player.position.y != 0)
+        movePlayer(game, UP, 0);
       break;
     case 's':
     case 'S':
-      movePlayer(game, DOWN);
+      if (game->player.regeneration == 0 && game->player.position.y != game->settings.mapHeight - 1)
+        movePlayer(game, DOWN, 0);
       break;
     case 'a':
     case 'A':
-      movePlayer(game, LEFT);
+      if (game->player.regeneration == 0 && game->player.position.x != 0)
+        movePlayer(game, LEFT, 0);
       break;
     case 'd':
     case 'D':
-      movePlayer(game, RIGHT);
+      if (game->player.regeneration == 0 && game->player.position.x != game->settings.mapWidth - 1)
+        movePlayer(game, RIGHT, 0);
       break;
     case 'q':
     case 'Q':
@@ -675,7 +693,7 @@ void update(game_t *game) {
   input(getch(), game);
   regeneratePlayer(&game->player);
   regenerateCars(game);
-  if (checkCrash(*game))
+  if (checkCrash(game))
     game->gameState = LOST;
   if (checkWin(*game))
     game->gameState = WIN;
