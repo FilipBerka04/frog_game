@@ -87,6 +87,7 @@ typedef struct{
   int roadCount;
   position_t *obstacles;
   int obstacleCount;
+  int carCount;
 }map_t;
 
 
@@ -124,6 +125,8 @@ typedef struct {
   int carMaxDelay;
   int minCarsNumber;
   int maxCarsNumber;
+  int carMinLength;
+  int carMaxLength;
   int roadNumber;
 }settings_t;
 
@@ -214,32 +217,35 @@ lane_t* initLanes(map_t *map, const settings_t settings) {
   return lanes;
 }
 
-//                                                                                      FIX THIS!!!!!!!!!!!!!!!!
-car_t initCar(const map_t map, int yPosition) {
-  if (yPosition == -1)
-    yPosition = yPositionOfRoad(map, (int)random() % map.roadCount + 1);
+
+car_t initCar(const map_t map, const int yPosition, const settings_t settings) {
   const carDirection_t b = (map.lanes[yPosition] == ROAD_LR) ? MOVES_RIGHT : MOVES_LEFT;
-  const int x = (b == MOVES_RIGHT) ? 0 : map.width - 1;
+  const int x = (b == MOVES_RIGHT) ? 0 : settings.mapWidth - 1;
   const car_t car = (car_t){
     .position = (position_t){yPosition, x},
     .good = 0,
-    .length = (int)random() % 4 + 1,
+    .length = (int)random() % (settings.carMaxLength - settings.carMinLength + 1) + settings.carMinLength,
     .regeneration = 0,
-    .behaviour = (carBehaviour_t)((int)random()%2),
+    .behaviour = (carBehaviour_t)(int)random() % 2,
     .direction = b,
     .dead = 0,
     .new = 1,
-    .careful = (char)!(random() % 3),
-    .delayBetweenMoves = (int)random()%10 + 5
+    .careful = (char)!(random() % 6),
+    .delayBetweenMoves = (int)random()%(settings.carMaxDelay - settings.carMinDelay + 1) + settings.carMinDelay,
   };
   return car;
 }
 
+
 car_t* initCars(const map_t map, const settings_t settings) {
   car_t *cars = (car_t*)malloc(sizeof(car_t) * settings.maxCarsNumber);
-  int *starting_lanes = randomUniqueNumbers(1, settings.roadNumber, settings.maxCarsNumber);
-  for (int i = 0; i < settings.maxCarsNumber; i++) {
-    cars[i] = initCar(map, yPositionOfRoad(map, starting_lanes[i]));
+  int *starting_lanes = randomUniqueNumbers(1, settings.roadNumber, settings.minCarsNumber);
+  for (int i = 0; i < settings.minCarsNumber; i++) {
+    cars[i] = initCar(map, yPositionOfRoad(map, starting_lanes[i]), settings);
+  }
+  for (int i = settings.minCarsNumber; i < settings.maxCarsNumber; i++) {
+    cars[i] = initCar(map, -1, settings);
+    cars[i].dead = 1;
   }
   free(starting_lanes);
   return cars;
@@ -255,6 +261,7 @@ map_t initMap(const settings_t settings){
   map.roadCount = 0;
   map.lanes = initLanes(&map, settings);
   map.obstacles = initObstacles(&map, settings);
+  map.carCount = settings.minCarsNumber;
   return map;
 }
 
@@ -279,6 +286,8 @@ settings_t initSettings() {
   fscanf(file, "CAR_MAX_DELAY %d\n" , &settings.carMaxDelay);// NOLINT(*-err34-c)
   fscanf(file, "MIN_CARS_NUMBER %d\n", &settings.minCarsNumber);// NOLINT(*-err34-c)
   fscanf(file, "MAX_CARS_NUMBER %d\n", &settings.maxCarsNumber);// NOLINT(*-err34-c)
+  fscanf(file, "CAR_MIN_LENGTH %d\n" , &settings.carMinLength);// NOLINT(*-err34-c)
+  fscanf(file, "CAR_MAX_LENGTH %d\n" , &settings.carMaxLength);// NOLINT(*-err34-c)
   fscanf(file, "ROAD_NUMBER %d\n", &settings.roadNumber);// NOLINT(*-err34-c)
   fclose(file);
   return settings;
@@ -516,12 +525,17 @@ char checkCarAhead(const car_t car, const car_t* cars, const settings_t settings
 }
 
 
-char carDisappear(car_t* car, const settings_t settings) {
+char carDisappear(map_t* map, car_t* car, const settings_t settings) {
   if (
       car->behaviour == DISAPPEARING &&
       ((car->direction == MOVES_RIGHT && car->position.x == settings.mapWidth-1) ||
       (car->direction == MOVES_LEFT && car->position.x == 0))) {
+    if (map->carCount == settings.minCarsNumber) {
+      car->behaviour = WRAPPING;
+      return 0;
+    }
     if (car->length == 1) {
+      map->carCount--;
       car->dead = 1;
       car->position.x = -1;
       car->position.y = -1;
@@ -558,13 +572,20 @@ void movePlayer(game_t *game, const position_t move){
 
 void moveCar(car_t* car, const map_t map, const settings_t settings) {
   if (car->direction == MOVES_RIGHT && car->position.x == map.width-1) {
-    car->position.x = 0;
-    car->new = 0;
+    if ((int)random() % 10) {
+      car->position.x = 0;
+      car->new = 0;
+    }else
+      car->behaviour = DISAPPEARING;
   }
   else
   if (car->direction == MOVES_LEFT && car->position.x == 0) {
-    car->position.x = map.width-1;
-    car->new = 0;
+    if ((int)random() % 10) {
+      car->position.x = map.width-1;
+      car->new = 0;
+    }else
+      car->behaviour = DISAPPEARING;
+
   }
   else
     car->position.x += (car->direction == MOVES_RIGHT) ? 1 : -1;
@@ -573,17 +594,32 @@ void moveCar(car_t* car, const map_t map, const settings_t settings) {
 }
 
 
-void moveCars(const game_t* game) {
+void createCar(game_t* game, const int carIndex) {
+  const int yPosition = yPositionOfRoad(game->map, (int)random() % game->settings.roadNumber + 1);
+  for (int i = 0; i < game->settings.maxCarsNumber; i++) {
+    if (game->cars[i].dead)
+      continue;
+    if (game->cars[i].direction == MOVES_RIGHT && game->cars[i].position.x < 4 && game->cars[i].position.y == yPosition)
+      return;
+    if (game->cars[i].direction == MOVES_LEFT && game->cars[i].position.x > game->map.width - 5 && game->cars[i].position.y == yPosition)
+      return;
+  }
+  game->cars[carIndex] = initCar(game->map, yPosition, game->settings);
+  game->map.carCount++;
+}
+
+
+void moveCars(game_t* game) {
   for(int i = 0; i < game->settings.maxCarsNumber; i++) {
     const car_t car = game->cars[i];
     if (car.regeneration != 0)
       continue;
     if (car.dead) {
       if (!((int)random()%1000))
-        game->cars[i] = initCar(game->map, -1);
+        createCar(game, i);
       continue;
     }
-    if (carDisappear(&game->cars[i], game->settings))
+    if (carDisappear(&game->map, &game->cars[i], game->settings))
       continue;
     if (checkStop(car, game->player.position))
       continue;
@@ -693,6 +729,8 @@ int main() {
     update(&game);
     nanosleep(&ts, NULL);
   }
+
+  refresh();
   while (getch() == ERR){}
   freeGame(&game);
   clear();
