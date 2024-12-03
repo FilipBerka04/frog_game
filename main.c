@@ -160,10 +160,8 @@ int* randomUniqueNumbers(const int min, int max, const int number) {
   return numbers;
 }
 
-//************************************************
-//**********************INITS*********************
-//************************************************
 
+//returns position of road number n on map
 int yPositionOfRoad(const map_t map, const int n) {
   int counter = 0;
   for (int i = 0; i < map.height; i++) {
@@ -174,6 +172,24 @@ int yPositionOfRoad(const map_t map, const int n) {
   }
   return -1;
 }
+
+
+//returns the highest length of a car that fits on a specific lane
+//(the highest value returned is car's max length from config even it there would be space for longer car)
+int highestFittingLength(const car_t* cars, const int y, const settings_t settings) {
+  int length = settings.mapWidth - 2;
+  for (int i = 0; i < settings.maxCarsNumber; i++)
+    if (!cars[i].dead && cars[i].position.y == y)
+      length -= cars[i].length + 1;
+  if (length > settings.carMaxLength)
+    return settings.carMaxLength;
+  return length;
+}
+
+
+//************************************************
+//**********************INITS*********************
+//************************************************
 
 
 position_t* initObstacles(map_t* map, const settings_t settings) {
@@ -219,13 +235,13 @@ lane_t* initLanes(map_t *map, const settings_t settings) {
 }
 
 
-car_t initCar(const map_t map, const int yPosition, const settings_t settings) {
+car_t initCar(const map_t map, const int yPosition, const int length,const settings_t settings) {
   const carDirection_t b = (map.lanes[yPosition] == ROAD_LR) ? MOVES_RIGHT : MOVES_LEFT;
   const int x = (b == MOVES_RIGHT) ? 0 : settings.mapWidth - 1;
   const car_t car = (car_t){
     .position = (position_t){yPosition, x},
     .good = (char)!(random() % 6),
-    .length = (int)random() % (settings.carMaxLength - settings.carMinLength + 1) + settings.carMinLength,
+    .length = length,
     .regeneration = 0,
     .behaviour = (carBehaviour_t)(int)random() % 2,
     .direction = b,
@@ -242,10 +258,11 @@ car_t* initCars(const map_t map, const settings_t settings) {
   car_t *cars = (car_t*)malloc(sizeof(car_t) * settings.maxCarsNumber);
   int *starting_lanes = randomUniqueNumbers(1, settings.roadNumber, settings.minCarsNumber);
   for (int i = 0; i < settings.minCarsNumber; i++) {
-    cars[i] = initCar(map, yPositionOfRoad(map, starting_lanes[i]), settings);
+    int length = (int)random() % (settings.carMaxLength - settings.carMinLength + 1) + settings.carMinLength;
+    cars[i] = initCar(map, yPositionOfRoad(map, starting_lanes[i]), length,settings);
   }
   for (int i = settings.minCarsNumber; i < settings.maxCarsNumber; i++) {
-    cars[i] = initCar(map, -1, settings);
+    cars[i] = initCar(map, -1, 1,settings);
     cars[i].dead = 1;
   }
   free(starting_lanes);
@@ -596,15 +613,18 @@ void moveCar(car_t* car, const map_t map, const settings_t settings) {
 
 void createCar(game_t* game, const int carIndex) {
   const int yPosition = yPositionOfRoad(game->map, (int)random() % game->settings.roadNumber + 1);
+  const int length = highestFittingLength(game->cars, yPosition, game->settings);
+  if (length < game->settings.carMinLength)
+    return;
   for (int i = 0; i < game->settings.maxCarsNumber; i++) {
     if (game->cars[i].dead)
       continue;
-    if (game->cars[i].direction == MOVES_RIGHT && game->cars[i].position.x < 4 && game->cars[i].position.y == yPosition)
+    if (game->cars[i].direction == MOVES_RIGHT && game->cars[i].position.x < (game->cars[i].length + 1)&& game->cars[i].position.y == yPosition)
       return;
-    if (game->cars[i].direction == MOVES_LEFT && game->cars[i].position.x > game->map.width - 5 && game->cars[i].position.y == yPosition)
+    if (game->cars[i].direction == MOVES_LEFT && game->cars[i].position.x > game->map.width - (game->cars[i].length + 2) && game->cars[i].position.y == yPosition)
       return;
   }
-  game->cars[carIndex] = initCar(game->map, yPosition, game->settings);
+  game->cars[carIndex] = initCar(game->map, yPosition,length, game->settings);
   game->map.carCount++;
 }
 
@@ -621,13 +641,10 @@ void changeCarSpeed(car_t* car, const settings_t settings) {
 void moveCars(game_t* game) {
   for(int i = 0; i < game->settings.maxCarsNumber; i++) {
     const car_t car = game->cars[i];
+    if (car.dead)
+      continue;
     if (car.regeneration != 0)
       continue;
-    if (car.dead) {
-      if (!((int)random()%1000))
-        createCar(game, i);
-      continue;
-    }
     if (carDisappear(&game->map, &game->cars[i], game->settings))
       continue;
     if (checkStop(car, game->player.position))
@@ -639,8 +656,14 @@ void moveCars(game_t* game) {
     moveCar(&game->cars[i], game->map, game->settings);
     if (i == game->player.inCar)
       movePlayer(game, (car.direction == MOVES_LEFT)?(LEFT):(RIGHT), 1);
-
   }
+}
+
+void spawnNewCars(game_t* game) {
+  for (int i = 0; i < game->settings.maxCarsNumber; i++)
+    if (game->cars[i].dead)
+      if (!((int)random()%1000))
+        createCar(game, i);
 }
 
 void regeneratePlayer(player_t* player){
@@ -690,6 +713,7 @@ void input(const char key, game_t *game) {
 //this loop gets called repeatedly when the game is running - every update calls other functions to update current state of the game and print the game to the screen
 void update(game_t *game) {
   moveCars(game);
+  spawnNewCars(game);
   input(getch(), game);
   regeneratePlayer(&game->player);
   regenerateCars(game);
