@@ -20,7 +20,6 @@
 
 #define NUMBER_OF_CARS 10
 #define PLAYER_DELAY 30
-#define MAX_OBSTACLES 50
 
 #define UP (position_t){ -1, 0 }
 #define DOWN (position_t){ 1, 0 }
@@ -129,6 +128,8 @@ typedef struct {
   int carMinLength;
   int carMaxLength;
   int roadNumber;
+  int maxObstacles;
+  int minObstacles;
 }settings_t;
 
 
@@ -193,20 +194,21 @@ int highestFittingLength(const car_t* cars, const int y, const settings_t settin
 
 
 position_t* initObstacles(map_t* map, const settings_t settings) {
-  position_t *obstacles = malloc(sizeof(position_t) * MAX_OBSTACLES);
+  const int maxMapObstacles = (settings.mapHeight - 2 - settings.roadNumber) * settings.maxObstacles;
+  position_t *obstacles = malloc(sizeof(position_t) * maxMapObstacles);
   int counter = 0;
   for (int i = 1; i < map->height-1; i++) {
     if (map->lanes[i] != GRASS)
       continue;
 
-    int j =  (int)random()%(map->width/3) + 3;
+    int j =  (int)random()%(settings.maxObstacles - settings.minObstacles + 1) + settings.minObstacles;
     int *cols = randomUniqueNumbers(0, map->width - 1, j);
     for (; j>0; j--) {
       position_t obstacle;
       obstacle.y = i;
       obstacle.x = cols[j-1];
       obstacles[counter++] = obstacle;
-      if (counter == MAX_OBSTACLES) {
+      if (counter == maxMapObstacles) {
         free(cols);
         map->obstacleCount = counter;
         return obstacles;
@@ -240,7 +242,7 @@ car_t initCar(const map_t map, const int yPosition, const int length,const setti
   const int x = (b == MOVES_RIGHT) ? 0 : settings.mapWidth - 1;
   const car_t car = (car_t){
     .position = (position_t){yPosition, x},
-    .good = (char)!(random() % 6),
+    .good = 1,
     .length = length,
     .regeneration = 0,
     .behaviour = (carBehaviour_t)(int)random() % 2,
@@ -290,7 +292,7 @@ player_t initPlayer(const settings_t settings) {
   player.position.y = settings.mapHeight - 1;
   player.delayBetweenMoves = settings.playerDelay;
   player.regeneration = 0;
-  player.inCar = 0;
+  player.inCar = -1;
   return player;
 }
 
@@ -308,6 +310,9 @@ settings_t initSettings() {
   fscanf(file, "CAR_MIN_LENGTH %d\n" , &settings.carMinLength);// NOLINT(*-err34-c)
   fscanf(file, "CAR_MAX_LENGTH %d\n" , &settings.carMaxLength);// NOLINT(*-err34-c)
   fscanf(file, "ROAD_NUMBER %d\n", &settings.roadNumber);// NOLINT(*-err34-c)
+  fscanf(file, "MAX_OBSTACLES_PER_LANE %d\n", &settings.maxObstacles);// NOLINT(*-err34-c)
+  fscanf(file, "MIN_OBSTACLES_PER_LANE %d\n", &settings.minObstacles);// NOLINT(*-err34-c)
+
   fclose(file);
   return settings;
 }
@@ -496,8 +501,7 @@ char checkCrash(game_t* game) {
       continue;
     if (!checkCarCollision(game->cars[i], game->map, game->player.position.x))
       continue;
-    if (game->cars[i].good) {
-      game->player.inCar = i;
+    if (game->cars[i].good && game->player.inCar == i) {
       return 0;
     }
     return 1;
@@ -574,9 +578,9 @@ char carDisappear(map_t* map, car_t* car, const settings_t settings) {
 }
 
 
-void movePlayer(game_t *game, const position_t move, char movedByCar){
-  int x = (game->player.position.x + move.x + game->settings.mapWidth) % game->settings.mapWidth;
-  int y = (game->player.position.y + move.y + game->settings.mapHeight) % game->settings.mapHeight;
+void movePlayer(game_t *game, const position_t move, const char movedByCar){
+  const int x = (game->player.position.x + move.x + game->settings.mapWidth) % game->settings.mapWidth;
+  const int y = (game->player.position.y + move.y + game->settings.mapHeight) % game->settings.mapHeight;
   for (int i = 0; i < game->map.obstacleCount; i++)
     if (game->map.obstacles[i].x == x && game->map.obstacles[i].y == y)
       return;
@@ -680,26 +684,40 @@ void regenerateCars(const game_t *game) {
 }
 
 
+void enteredCar(game_t* game) {
+  for (int i = 0; i < game->settings.maxCarsNumber; i++) {
+    if (game->cars[i].good)
+      if (checkCarCollision(game->cars[i], game->map, game->player.position.x)) {
+        game->player.inCar = i;
+      }
+  }
+}
+
+
 void input(const char key, game_t *game) {
   switch (key) {
     case 'w':
     case 'W':
-      if (game->player.regeneration == 0 && game->player.position.y != 0)
+      if (game->player.regeneration == 0 && game->player.position.y != 0) {
         movePlayer(game, UP, 0);
+        enteredCar(game);
+      }
       break;
     case 's':
     case 'S':
-      if (game->player.regeneration == 0 && game->player.position.y != game->settings.mapHeight - 1)
+      if (game->player.regeneration == 0 && game->player.position.y != game->settings.mapHeight - 1) {
         movePlayer(game, DOWN, 0);
+        enteredCar(game);
+      }
       break;
     case 'a':
     case 'A':
-      if (game->player.regeneration == 0 && game->player.position.x != 0)
+      if (game->player.regeneration == 0 && game->player.position.x != 0 && game->player.inCar == -1)
         movePlayer(game, LEFT, 0);
       break;
     case 'd':
     case 'D':
-      if (game->player.regeneration == 0 && game->player.position.x != game->settings.mapWidth - 1)
+      if (game->player.regeneration == 0 && game->player.position.x != game->settings.mapWidth - 1 && game->player.inCar == -1)
         movePlayer(game, RIGHT, 0);
       break;
     case 'q':
@@ -714,11 +732,11 @@ void input(const char key, game_t *game) {
 void update(game_t *game) {
   moveCars(game);
   spawnNewCars(game);
+  if (checkCrash(game))
+    game->gameState = LOST;
   input(getch(), game);
   regeneratePlayer(&game->player);
   regenerateCars(game);
-  if (checkCrash(game))
-    game->gameState = LOST;
   if (checkWin(*game))
     game->gameState = WIN;
   printGame(*game);
