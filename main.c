@@ -23,14 +23,10 @@
 #define BORDER_CHAR '#'
 #define STORK_CHAR '*'
 
-
-
-
 #define UP (position_t){ -1, 0 }
 #define DOWN (position_t){ 1, 0 }
 #define LEFT (position_t){ 0, -1 }
 #define RIGHT (position_t){ 0, 1 }
-
 
 #define MAP_POSITION ((position_t){ 5, COLS/2 - map.width/2 })
 
@@ -147,20 +143,15 @@ typedef struct {
 }game_t;
 
 
+typedef struct {
+  unsigned int score;
+  char name[16];
+}score_t;
+
 
 //************************************************
 //*****************BASIC-FUNCTIONS****************
 //************************************************
-
-int numberOfDigits(unsigned int n) {
-  int r = 1;
-  while (n > 9) {
-    r++;
-    n /= 10;
-  }
-  return r;
-}
-
 
 int* randomUniqueNumbers(const int min, int max, const int number) {
   max = max - min + 1;
@@ -332,8 +323,62 @@ stork_t initStork(const settings_t settings, const int level) {
 }
 
 
+void configError(const int i) {
+  clear();
+  nodelay(stdscr, 0);
+  switch (i) {
+    case 0:
+      mvprintw(0,0,"Map height must be greater than 2\n");
+    break;
+    case 1:
+      mvprintw(0,0,"Map width must be greater than 5\n");
+    break;
+    case 2:
+      mvprintw(0,0,"Incorrect car delays\n");
+    break;
+    case 3:
+      mvprintw(0,0,"Min cars number must be <= road number\n");
+    case 4:
+      mvprintw(0,0,"Incorrect obstacle numbers\n");
+    break;
+    case 5:
+      mvprintw(0,0,"Road number must be less or equal to map height - 2\n");
+    break;
+    case 6:
+      mvprintw(0,0,"No CONFIG.txt file\n");
+    break;
+    default:
+      mvprintw(0,0,"CONFIG ERROR\n");
+  }
+  refresh();
+  getch();
+  clear();
+  endwin();
+  exit(1);
+}
+
+
+void verifyConfig(const settings_t s) {
+  if (s.mapHeight < 3)
+    configError(0);
+  if (s.mapWidth < 6)
+    configError(1);
+  if (s.carMaxDelay < s.carMinDelay)
+    configError(2);
+  if (s.minCarsNumber > s.roadNumber)
+    configError(3);
+  if (s.minCarsNumber > s.maxCarsNumber)
+    configError(4);
+  if (s.roadNumber > s.mapHeight - 2)
+    configError(5);
+}
+
+
 settings_t readSettings() {
   FILE *file = fopen("CONFIG.txt", "r");
+  if (file == NULL) {
+    configError(6);
+  }
   settings_t settings;
   fscanf(file, "MAP_HEIGHT %d\n", &settings.mapHeight); // NOLINT(*-err34-c)
   fscanf(file, "MAP_WIDTH %d\n", &settings.mapWidth);// NOLINT(*-err34-c)
@@ -347,8 +392,8 @@ settings_t readSettings() {
   fscanf(file, "LV1_ROAD_NUMBER %d\n", &settings.roadNumber);// NOLINT(*-err34-c)
   fscanf(file, "LV2_MAX_OBSTACLES_PER_LANE %d\n", &settings.maxObstacles);// NOLINT(*-err34-c)
   fscanf(file, "LV2_MIN_OBSTACLES_PER_LANE %d\n", &settings.minObstacles);// NOLINT(*-err34-c)
-
   fclose(file);
+  verifyConfig(settings);
   return settings;
 }
 
@@ -361,10 +406,10 @@ settings_t initSettings(const int level) {
   settings.roadNumber += (settings.mapHeight - 2 - settings.roadNumber) / 4 * (level - 1);
   settings.minObstacles = (level - 1) * settings.minObstacles;
   settings.maxObstacles = (level - 1) * settings.maxObstacles;
+  if (settings.maxObstacles > settings.mapWidth / 3)
+    settings.maxObstacles = settings.mapWidth / 3;
   return settings;
 }
-
-
 
 
 game_t initGame(const unsigned short int level) {
@@ -544,6 +589,38 @@ void printMenu() {
   mvprintw(3, 0, "3. Show leaderboard");
   mvprintw(4, 0, "4. Exit");
 
+}
+
+int scoreCompare(const void* score1, const void* score2) {
+  return (int)((score_t*)score2)->score - (int)((score_t*)score1)->score;
+}
+
+void printLeaderboard() {
+  FILE *f = fopen("SCORES.txt", "r");
+  if (f == NULL) {
+    printf("No scores saved");
+    return;
+  }
+  char count = 0;
+  score_t currentScore;
+  score_t topTen[11];
+  while (fscanf(f, "%s %u", currentScore.name, &currentScore.score) != EOF) { // NOLINT(*-err34-c)
+    if (count < 10) {
+      topTen[count++] = currentScore;
+      continue;
+    }
+    topTen[10] = currentScore;
+    qsort(topTen, 11, sizeof(score_t), scoreCompare);
+  }
+
+  if (count > 10)
+    count = 10;
+  clear();
+  for (int i = 0; i < count; i++) {
+    mvprintw(i + 2, COLS/2 - 15, " | %15s | %3u |", topTen[i].name, topTen[i].score);
+  }
+  refresh();
+  getch();
 }
 
 //-----------------control stuff------------------
@@ -849,15 +926,32 @@ void update(game_t *game) {
 }
 
 
+void saveScore(score_t s) {
+  FILE *f = fopen("SCORES.txt", "a+");
+  fprintf(f, "%s %u\n", s.name, s.score);
+  fclose(f);
+}
+
+
 void gameFinished(const unsigned int score) {
   clear();
-  const struct timespec ts = {1,0};
-  mvprintw(LINES / 2, COLS / 2 - 4, "YOU WIN!!!");
-  mvprintw(LINES / 2 + 1, COLS / 2 - 6, "Your score: %d", score);
-  refresh();
-  nanosleep(&ts, NULL);
-  while (getch() == ERR){};
+  mvprintw(LINES / 2 - 3, COLS / 2 - 10, "YOU WIN!!!");
+  mvprintw(LINES / 2 - 2, COLS / 2 - 10, "Your score: %d", score);
+  mvprintw(LINES / 2 - 1, COLS / 2 - 10, "Input your name");
+  mvprintw(LINES / 2 , COLS/2 - 10, "(max 15 characters):");
+  move(LINES / 2 + 1, COLS / 2 - 10);
+  nodelay(stdscr, 0);
+  curs_set(1);
+  echo();
+  score_t s;
+  s.score = score;
+  scanw("%s", s.name);
+  nodelay(stdscr, 1);
+  curs_set(0);
+  noecho();
+  saveScore(s);
 }
+
 
 
 void freeGame(const game_t* game) {
@@ -879,7 +973,7 @@ void colors() {
   init_pair(COLOR_FINISH, COLOR_MAGENTA, COLOR_MAGENTA);
   init_pair(COLOR_TEXT, COLOR_WHITE, COLOR_BLACK);
   init_pair(COLOR_OBSTACLE, COLOR_YELLOW, COLOR_GREEN);
-  init_pair(COLOR_STORK, COLOR_WHITE, COLOR_BLACK);
+  init_pair(COLOR_STORK, COLOR_BLACK, COLOR_WHITE);
 }
 
 
@@ -888,13 +982,13 @@ void setup() {
   clear();
   noecho();
   curs_set(0);
-  nodelay(stdscr, 1);
   srandom(time(NULL));
   colors();
 }
 
 
 void startGame() {
+  nodelay(stdscr, 1);
   const struct timespec ts = {0, 10000000};
   unsigned int level = 1, totalScore = 0;
   game_t game;
@@ -911,16 +1005,15 @@ void startGame() {
   if (game.gameState == WIN)
     gameFinished(totalScore);
   freeGame(&game);
+  nodelay(stdscr, 0);
 }
 
 
 int main() {
   setup();
-
   while (1) {
-    char ch;
     printMenu();
-    while ((ch = getch()) == ERR) {}
+    const char ch = getch();
     if (ch == '1') {
       startGame();
     }
@@ -928,7 +1021,7 @@ int main() {
       continue;
     }
     else if (ch == '3') {
-
+      printLeaderboard();
     }
     else if (ch == '4') {
       clear();
