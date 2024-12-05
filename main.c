@@ -18,17 +18,18 @@
 #define COLOR_TEXT 17
 #define COLOR_OBSTACLE 18
 
-#define NUMBER_OF_CARS 10
-#define PLAYER_DELAY 30
+#define BORDER_CHAR '#'
+
+
+
 
 #define UP (position_t){ -1, 0 }
 #define DOWN (position_t){ 1, 0 }
 #define LEFT (position_t){ 0, -1 }
 #define RIGHT (position_t){ 0, 1 }
 
-#define MAP_WIDTH 21
-#define MAP_HEIGHT 20
-#define MAP_POSITION ((position_t){ 2, COLS/2 - 31/2 })
+
+#define MAP_POSITION ((position_t){ 4, COLS/2 - map.width/2 })
 
 //************************************************
 //*********************ENUMS**********************
@@ -73,15 +74,8 @@ typedef struct {
 
 typedef struct{
   position_t position;
-  char borderChar;
-}border_t;
-
-
-typedef struct{
-  position_t position;
   int width;
   int height;
-  border_t border;
   lane_t *lanes;
   int roadCount;
   position_t *obstacles;
@@ -242,7 +236,7 @@ car_t initCar(const map_t map, const int yPosition, const int length,const setti
   const int x = (b == MOVES_RIGHT) ? 0 : settings.mapWidth - 1;
   const car_t car = (car_t){
     .position = (position_t){yPosition, x},
-    .good = 1,
+    .good = (char)!(random()%6),
     .length = length,
     .regeneration = 0,
     .behaviour = (carBehaviour_t)(int)random() % 2,
@@ -260,7 +254,7 @@ car_t* initCars(const map_t map, const settings_t settings) {
   car_t *cars = (car_t*)malloc(sizeof(car_t) * settings.maxCarsNumber);
   int *starting_lanes = randomUniqueNumbers(1, settings.roadNumber, settings.minCarsNumber);
   for (int i = 0; i < settings.minCarsNumber; i++) {
-    int length = (int)random() % (settings.carMaxLength - settings.carMinLength + 1) + settings.carMinLength;
+    const int length = (int)random() % (settings.carMaxLength - settings.carMinLength + 1) + settings.carMinLength;
     cars[i] = initCar(map, yPositionOfRoad(map, starting_lanes[i]), length,settings);
   }
   for (int i = settings.minCarsNumber; i < settings.maxCarsNumber; i++) {
@@ -271,13 +265,12 @@ car_t* initCars(const map_t map, const settings_t settings) {
   return cars;
 }
 
+
 map_t initMap(const settings_t settings){
   map_t map;
   map.width = settings.mapWidth;
   map.height = settings.mapHeight;
   map.position = MAP_POSITION;
-  map.border.borderChar = '#';
-  map.border.position = (position_t){map.position.y-1, map.position.x-1};
   map.roadCount = 0;
   map.lanes = initLanes(&map, settings);
   map.obstacles = initObstacles(&map, settings);
@@ -336,17 +329,18 @@ game_t initGame() {
 //-----------------printing stuff-----------------
 void printBorder(const map_t map){
   attron(COLOR_PAIR(COLOR_BORDER));
-  mvaddch(map.border.position.y, map.border.position.x, '+');
-  mvaddch(map.border.position.y + map.height + 1, map.border.position.x + map.width + 1, '+');
-  mvaddch(map.border.position.y, map.border.position.x + map.width +1, '+');
-  mvaddch(map.border.position.y + map.height + 1, map.border.position.x, '+');
-  for(int x = 1; x < (map.width) + 1; x++){
-    mvaddch(map.border.position.y, map.border.position.x + x, '-');
-    mvaddch(map.border.position.y + map.height + 1, map.border.position.x + x, '-');
+  const int y = 1, x = map.position.x - 1;
+  const int rows[4] = {y, y + 2, map.height + y + 3, map.height + y + 5};
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < map.width + 2; j++) {
+      mvaddch(rows[i], x + j, BORDER_CHAR);
+    }
   }
-  for(int y = 0; y < map.height; y++){
-    mvaddch(map.border.position.y + y + 1, map.border.position.x, '|');
-    mvaddch(map.border.position.y + y + 1, map.border.position.x + map.width + 1, '|');
+  const int cols[2] = {x, x + map.width + 1};
+  for (int i = 0; i < 2; i++) {
+    for (int j = 0; j < map.height + 6; j++) {
+      mvaddch(y + j, cols[i], BORDER_CHAR);
+    }
   }
 }
 
@@ -375,10 +369,10 @@ void printLane(const position_t position, const lane_t lane, const int width) {
     mvaddch(position.y, position.x + x, ch);
 }
 
-void printObstacles(const game_t game) {
-  for (int i = 0; i < game.map.obstacleCount; i++) {
+void printObstacles(const map_t map) {
+  for (int i = 0; i < map.obstacleCount; i++) {
     attron(COLOR_PAIR(COLOR_OBSTACLE));
-    mvaddch(game.map.obstacles[i].y + game.map.position.y, game.map.obstacles[i].x + game.map.position.x, '&');
+    mvaddch(map.obstacles[i].y + map.position.y, map.obstacles[i].x + map.position.x, '&');
   }
 }
 
@@ -436,7 +430,9 @@ void printCars(const game_t game) {
 
 void printStats(const game_t game) {
   attron(COLOR_PAIR(COLOR_TEXT));
-  mvprintw(game.map.position.y + game.map.height + 1, game.map.position.x -1, "Time: %.2fs", (double)game.updates_counter / 100.0);
+  mvprintw(game.map.position.y - 2, game.map.position.x, "Filip Berka");
+  mvprintw(game.map.position.y - 2, game.map.position.x - 6 + game.map.width, "203163");
+  mvprintw(game.map.position.y + game.map.height + 1, game.map.position.x , "Time: %.2fs", (double)game.updates_counter / 100.0);
 }
 
 
@@ -448,7 +444,7 @@ void printGame(const game_t game){
     printStats(game);
     printCars(game);
     printPlayer(game);
-    printObstacles(game);
+    printObstacles(game.map);
     return;
   }
   if (game.gameState == WIN) {
