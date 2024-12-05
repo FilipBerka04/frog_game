@@ -3,6 +3,7 @@
 #include <time.h>
 #include <curses.h>
 #include <string.h>
+#include <math.h>
 
 //************************************************
 //*******************DEFINES**********************
@@ -17,8 +18,10 @@
 #define COLOR_FINISH 16
 #define COLOR_TEXT 17
 #define COLOR_OBSTACLE 18
+#define COLOR_STORK 19
 
 #define BORDER_CHAR '#'
+#define STORK_CHAR '*'
 
 
 
@@ -29,7 +32,7 @@
 #define RIGHT (position_t){ 0, 1 }
 
 
-#define MAP_POSITION ((position_t){ 4, COLS/2 - map.width/2 })
+#define MAP_POSITION ((position_t){ 5, COLS/2 - map.width/2 })
 
 //************************************************
 //*********************ENUMS**********************
@@ -107,7 +110,10 @@ typedef struct {
 
 
 typedef struct {
-
+  position_t position;
+  int delayBetweenMoves;
+  int regeneration;
+  char dead;
 }stork_t;
 
 
@@ -131,9 +137,13 @@ typedef struct {
   map_t map;
   player_t player;
   car_t* cars;
+  stork_t stork;
   gameState_t gameState;
-  unsigned long int updates_counter;
+  unsigned long int updatesCounter;
+  unsigned long int movesCounter;
   settings_t settings;
+  unsigned short int level;
+  unsigned int score;
 }game_t;
 
 
@@ -141,6 +151,15 @@ typedef struct {
 //************************************************
 //*****************BASIC-FUNCTIONS****************
 //************************************************
+
+int numberOfDigits(unsigned int n) {
+  int r = 1;
+  while (n > 9) {
+    r++;
+    n /= 10;
+  }
+  return r;
+}
 
 
 int* randomUniqueNumbers(const int min, int max, const int number) {
@@ -169,10 +188,22 @@ int yPositionOfRoad(const map_t map, const int n) {
 }
 
 
+unsigned int calculateScore(const game_t game) {
+  int score = 200, timeDeduction = 0, moveDeduction = 0;
+  timeDeduction = (int)(game.updatesCounter/100);
+  if (timeDeduction > 100)
+    timeDeduction = 100;
+  moveDeduction = (int)(game.movesCounter/2);
+  if (moveDeduction > 100)
+    moveDeduction = 100;
+  score -= timeDeduction + moveDeduction;
+  return score;
+}
+
 //returns the highest length of a car that fits on a specific lane
 //(the highest value returned is car's max length from config even it there would be space for longer car)
 int highestFittingLength(const car_t* cars, const int y, const settings_t settings) {
-  int length = settings.mapWidth - 2;
+  int length = settings.mapWidth - 4;
   for (int i = 0; i < settings.maxCarsNumber; i++)
     if (!cars[i].dead && cars[i].position.y == y)
       length -= cars[i].length + 1;
@@ -290,35 +321,64 @@ player_t initPlayer(const settings_t settings) {
 }
 
 
-settings_t initSettings() {
+stork_t initStork(const settings_t settings, const int level) {
+  stork_t stork;
+  stork.position.x = settings.mapWidth / 2;
+  stork.position.y = 0;
+  stork.delayBetweenMoves = settings.playerDelay * 4;
+  stork.regeneration = 0;
+  stork.dead = (level == 3)?0:1;
+  return stork;
+}
+
+
+settings_t readSettings() {
   FILE *file = fopen("CONFIG.txt", "r");
   settings_t settings;
   fscanf(file, "MAP_HEIGHT %d\n", &settings.mapHeight); // NOLINT(*-err34-c)
   fscanf(file, "MAP_WIDTH %d\n", &settings.mapWidth);// NOLINT(*-err34-c)
   fscanf(file, "PLAYER_DELAY %d\n" , &settings.playerDelay);// NOLINT(*-err34-c)
-  fscanf(file, "CAR_MIN_DELAY %d\n" , &settings.carMinDelay);// NOLINT(*-err34-c)
-  fscanf(file, "CAR_MAX_DELAY %d\n" , &settings.carMaxDelay);// NOLINT(*-err34-c)
+  fscanf(file, "LV1_CAR_MIN_DELAY %d\n" , &settings.carMinDelay);// NOLINT(*-err34-c)
+  fscanf(file, "LV1_CAR_MAX_DELAY %d\n" , &settings.carMaxDelay);// NOLINT(*-err34-c)
   fscanf(file, "MIN_CARS_NUMBER %d\n", &settings.minCarsNumber);// NOLINT(*-err34-c)
-  fscanf(file, "MAX_CARS_NUMBER %d\n", &settings.maxCarsNumber);// NOLINT(*-err34-c)
+  fscanf(file, "LV1_MAX_CARS_NUMBER %d\n", &settings.maxCarsNumber);// NOLINT(*-err34-c)
   fscanf(file, "CAR_MIN_LENGTH %d\n" , &settings.carMinLength);// NOLINT(*-err34-c)
   fscanf(file, "CAR_MAX_LENGTH %d\n" , &settings.carMaxLength);// NOLINT(*-err34-c)
-  fscanf(file, "ROAD_NUMBER %d\n", &settings.roadNumber);// NOLINT(*-err34-c)
-  fscanf(file, "MAX_OBSTACLES_PER_LANE %d\n", &settings.maxObstacles);// NOLINT(*-err34-c)
-  fscanf(file, "MIN_OBSTACLES_PER_LANE %d\n", &settings.minObstacles);// NOLINT(*-err34-c)
+  fscanf(file, "LV1_ROAD_NUMBER %d\n", &settings.roadNumber);// NOLINT(*-err34-c)
+  fscanf(file, "LV2_MAX_OBSTACLES_PER_LANE %d\n", &settings.maxObstacles);// NOLINT(*-err34-c)
+  fscanf(file, "LV2_MIN_OBSTACLES_PER_LANE %d\n", &settings.minObstacles);// NOLINT(*-err34-c)
 
   fclose(file);
   return settings;
 }
 
 
-game_t initGame() {
+settings_t initSettings(const int level) {
+  settings_t settings = readSettings();
+  settings.carMinDelay -= (level - 1) * settings.carMinDelay / 4;
+  settings.carMaxDelay /= level;
+  settings.maxCarsNumber += (level - 1) * 4;
+  settings.roadNumber += (settings.mapHeight - 2 - settings.roadNumber) / 4 * (level - 1);
+  settings.minObstacles = (level - 1) * settings.minObstacles;
+  settings.maxObstacles = (level - 1) * settings.maxObstacles;
+  return settings;
+}
+
+
+
+
+game_t initGame(const unsigned short int level) {
   game_t game;
-  game.settings = initSettings();
+  game.level = level;
+  game.settings = initSettings(level);
   game.map = initMap(game.settings);
   game.player = initPlayer(game.settings);
   game.cars = initCars(game.map, game.settings);
   game.gameState = PLAYING;
-  game.updates_counter = 0;
+  game.updatesCounter = 0;
+  game.movesCounter = 0;
+  game.stork = initStork(game.settings, level);
+  game.score = 0;
   return game;
 }
 
@@ -329,8 +389,8 @@ game_t initGame() {
 //-----------------printing stuff-----------------
 void printBorder(const map_t map){
   attron(COLOR_PAIR(COLOR_BORDER));
-  const int y = 1, x = map.position.x - 1;
-  const int rows[4] = {y, y + 2, map.height + y + 3, map.height + y + 5};
+  const int y = map.position.y - 4, x = map.position.x - 1;
+  const int rows[4] = {y, y + 3, map.height + y + 4, map.height + y + 7};
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < map.width + 2; j++) {
       mvaddch(rows[i], x + j, BORDER_CHAR);
@@ -338,7 +398,7 @@ void printBorder(const map_t map){
   }
   const int cols[2] = {x, x + map.width + 1};
   for (int i = 0; i < 2; i++) {
-    for (int j = 0; j < map.height + 6; j++) {
+    for (int j = 0; j < map.height + 7; j++) {
       mvaddch(y + j, cols[i], BORDER_CHAR);
     }
   }
@@ -430,45 +490,69 @@ void printCars(const game_t game) {
 
 void printStats(const game_t game) {
   attron(COLOR_PAIR(COLOR_TEXT));
-  mvprintw(game.map.position.y - 2, game.map.position.x, "Filip Berka");
-  mvprintw(game.map.position.y - 2, game.map.position.x - 6 + game.map.width, "203163");
-  mvprintw(game.map.position.y + game.map.height + 1, game.map.position.x , "Time: %.2fs", (double)game.updates_counter / 100.0);
+  mvprintw(game.map.position.y - 3, game.map.position.x, "Filip Berka");
+  mvprintw(game.map.position.y - 2, game.map.position.x, "203163");
+  mvprintw(game.map.position.y + game.map.height + 1, game.map.position.x, "Time: %.2fs", (double)game.updatesCounter / 100.0);
+  mvprintw(game.map.position.y + game.map.height + 2, game.map.position.x, "Moves: %lu", game.movesCounter);
+}
+
+
+void printStork(const game_t game) {
+  if (game.stork.dead)
+    return;
+  attron(COLOR_PAIR(COLOR_STORK));
+  mvaddch(game.map.position.y + game.stork.position.y, game.map.position.x + game.stork.position.x, STORK_CHAR);
 }
 
 
 void printGame(const game_t game){
   clear();
-
   if (game.gameState == PLAYING) {
     printMap(game.map);
     printStats(game);
     printCars(game);
     printPlayer(game);
     printObstacles(game.map);
+    printStork(game);
     return;
   }
+  const struct timespec t = {1,0};
+  attron(COLOR_PAIR(COLOR_TEXT));
   if (game.gameState == WIN) {
-    attron(COLOR_PAIR(COLOR_TEXT));
-    mvprintw(LINES/2, COLS/2 - 4, "YOU WIN");
-    mvprintw(LINES/2 + 1, COLS/2 - 8, "Your time: %.2fs", (double)game.updates_counter / 100.0);
-    return;
+    mvprintw(LINES/2 - 1, COLS/2 - 8, "LEVEL %d COMPLETED", game.level);
+    mvprintw(LINES/2, COLS/2 - 8, "Your time: %.2fs", (double)game.updatesCounter / 100.0);
+    mvprintw(LINES/2 + 1, COLS/2 - 8, "Your score: %d", calculateScore(game));
   }
-  if (game.gameState == LOST) {
-    attron(COLOR_PAIR(COLOR_TEXT));
-    mvprintw(LINES/2, COLS/2, "YOU LOOSE");
+  else if (game.gameState == LOST) {
+    mvprintw(LINES/2 , COLS/2 - 3, "YOU LOOSE");
   }
-  if (game.gameState == STOPPED) {
-    attron(COLOR_PAIR(COLOR_TEXT));
-    mvprintw(LINES/2, COLS/2, "GAME ABORTED");
+  else {
+    mvprintw(LINES/2, COLS/2 - 5, "GAME ABORTED");
   }
+  refresh();
+  nanosleep(&t, NULL);
+  while (getch() == ERR){}
 }
 
 
+void printMenu() {
+  attron(COLOR_PAIR(COLOR_TEXT));
+  clear();
+  mvprintw(0, 0, "FROG GAME BY FILIP BERKA");
+  mvprintw(1, 0, "1. Start game");
+  mvprintw(2, 0, "2. Show recorded game");
+  mvprintw(3, 0, "3. Show leaderboard");
+  mvprintw(4, 0, "4. Exit");
+
+}
+
 //-----------------control stuff------------------
-char checkCarCollision(const car_t car, const map_t map, const int px) {
+char checkCarCollision(const car_t car, const map_t map, const position_t playerPosition) {
+  if (car.position.y != playerPosition.y)
+    return 0;
   if (!car.new) {
     for (int i = 0; i < car.length; i++) {
-      if ((car.position.x + ((car.direction==MOVES_RIGHT)?(-i):(i)) + map.width)%map.width == px)
+      if ((car.position.x + ((car.direction==MOVES_RIGHT)?(-i):(i)) + map.width)%map.width == playerPosition.x)
       return 1;
     }
     return 0;
@@ -482,27 +566,26 @@ char checkCarCollision(const car_t car, const map_t map, const int px) {
       car.direction == MOVES_RIGHT &&
       car.position.x - i < 0)
       return 0;
-    if (car.position.x + ((car.direction==MOVES_RIGHT)?(-i):(i)) == px)
+    if (car.position.x + ((car.direction==MOVES_RIGHT)?(-i):(i)) == playerPosition.x)
       return 1;
   }
   return 0;
 }
 
 
-char checkCrash(game_t* game) {
+char checkCrash(const game_t* game) {
+  if (game->player.position.x == game->stork.position.x && game->player.position.y == game->stork.position.y && !game->stork.dead)
+    return 1;
   for(int i = 0; i < game->settings.maxCarsNumber; i++) {
     if (game->cars[i].dead)
       continue;
-    if (game->cars[i].position.y != game->player.position.y)
-      continue;
-    if (!checkCarCollision(game->cars[i], game->map, game->player.position.x))
+    if (!checkCarCollision(game->cars[i], game->map, game->player.position))
       continue;
     if (game->cars[i].good && game->player.inCar == i) {
       return 0;
     }
     return 1;
   }
-  game->player.inCar = -1;
   return 0;
 }
 
@@ -582,8 +665,11 @@ void movePlayer(game_t *game, const position_t move, const char movedByCar){
       return;
   game->player.position.x = x;
   game->player.position.y = y;
-  if (!movedByCar)
+  if (!movedByCar) {
     game->player.regeneration = game->player.delayBetweenMoves;
+    game->movesCounter++;
+  }
+
 }
 
 
@@ -608,6 +694,21 @@ void moveCar(car_t* car, const map_t map, const settings_t settings) {
     car->position.x += (car->direction == MOVES_RIGHT) ? 1 : -1;
 
     car->regeneration = car->delayBetweenMoves;
+}
+
+
+void moveStork(stork_t* stork, const position_t playerPosition) {
+  if (stork->regeneration || stork->dead)
+    return;
+  if (playerPosition.x > stork->position.x)
+    stork->position.x++;
+  else if (playerPosition.x < stork->position.x)
+    stork->position.x--;
+  if (playerPosition.y > stork->position.y)
+    stork->position.y++;
+  else if (playerPosition.y < stork->position.y)
+    stork->position.y--;
+  stork->regeneration = stork->delayBetweenMoves;
 }
 
 
@@ -679,14 +780,20 @@ void regenerateCars(const game_t *game) {
   }
 }
 
+void regenerateStork(stork_t* stork) {
+  if(stork->regeneration != 0)
+    stork->regeneration -= 1;
+}
 
 void enteredCar(game_t* game) {
   for (int i = 0; i < game->settings.maxCarsNumber; i++) {
     if (game->cars[i].good)
-      if (checkCarCollision(game->cars[i], game->map, game->player.position.x)) {
+      if (checkCarCollision(game->cars[i], game->map, game->player.position)) {
         game->player.inCar = i;
+        return;
       }
   }
+  game->player.inCar = -1;
 }
 
 
@@ -727,16 +834,29 @@ void input(const char key, game_t *game) {
 //this loop gets called repeatedly when the game is running - every update calls other functions to update current state of the game and print the game to the screen
 void update(game_t *game) {
   moveCars(game);
+  moveStork(&game->stork, game->player.position);
   spawnNewCars(game);
   if (checkCrash(game))
     game->gameState = LOST;
   input(getch(), game);
   regeneratePlayer(&game->player);
   regenerateCars(game);
+  regenerateStork(&game->stork);
   if (checkWin(*game))
     game->gameState = WIN;
   printGame(*game);
-  game->updates_counter++;
+  game->updatesCounter++;
+}
+
+
+void gameFinished(const unsigned int score) {
+  clear();
+  const struct timespec ts = {1,0};
+  mvprintw(LINES / 2, COLS / 2 - 4, "YOU WIN!!!");
+  mvprintw(LINES / 2 + 1, COLS / 2 - 6, "Your score: %d", score);
+  refresh();
+  nanosleep(&ts, NULL);
+  while (getch() == ERR){};
 }
 
 
@@ -759,37 +879,61 @@ void colors() {
   init_pair(COLOR_FINISH, COLOR_MAGENTA, COLOR_MAGENTA);
   init_pair(COLOR_TEXT, COLOR_WHITE, COLOR_BLACK);
   init_pair(COLOR_OBSTACLE, COLOR_YELLOW, COLOR_GREEN);
+  init_pair(COLOR_STORK, COLOR_WHITE, COLOR_BLACK);
 }
 
-//basic setup of ncurses screen;
+
 void setup() {
   initscr();
   clear();
   noecho();
-  nodelay(stdscr, 1);
   curs_set(0);
+  nodelay(stdscr, 1);
   srandom(time(NULL));
   colors();
 }
 
 
-
+void startGame() {
+  const struct timespec ts = {0, 10000000};
+  unsigned int level = 1, totalScore = 0;
+  game_t game;
+  do {
+    game = initGame(level++);
+    while (game.gameState == PLAYING) {
+      update(&game);
+      nanosleep(&ts, NULL);
+    }
+    if (game.gameState != WIN)
+      break;
+    totalScore += calculateScore(game);
+  }while (level < 4);
+  if (game.gameState == WIN)
+    gameFinished(totalScore);
+  freeGame(&game);
+}
 
 
 int main() {
   setup();
-  const struct timespec ts = {0, 10000000};
 
-  game_t game = initGame();
-  while(game.gameState == PLAYING) {
-    update(&game);
-    nanosleep(&ts, NULL);
+  while (1) {
+    char ch;
+    printMenu();
+    while ((ch = getch()) == ERR) {}
+    if (ch == '1') {
+      startGame();
+    }
+    else if (ch == '2') {
+      continue;
+    }
+    else if (ch == '3') {
+
+    }
+    else if (ch == '4') {
+      clear();
+      endwin();
+      return 0;
+    }
   }
-
-  refresh();
-  while (getch() == ERR){}
-  freeGame(&game);
-  clear();
-  endwin();
-  return 0;
 }
