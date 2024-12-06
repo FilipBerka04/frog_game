@@ -36,6 +36,11 @@
 
 #define MAP_POSITION ((position_t){ 5, COLS/2 - map.width/2 })
 
+#define CAR_MIN_DISTANCE 2
+#define MIN_EMPTY_SCAPE 4
+#define SEE_FROG_DISTANCE_X 3
+#define SEE_FROG_DISTANCE_Y 1
+
 //************************************************
 //*********************ENUMS**********************
 //************************************************
@@ -200,10 +205,10 @@ unsigned int calculateScore(const game_t game) {
 //returns the highest length of a car that fits on a specific lane,
 //(the highest value returned is car's max length from config even it there would be space for longer car)
 int highestFittingLength(const car_t* cars, const int y, const settings_t settings) {
-  int length = settings.mapWidth - 4;
+  int length = settings.mapWidth - MIN_EMPTY_SCAPE - 1;
   for (int i = 0; i < settings.maxCarsNumber; i++)
     if (!cars[i].dead && cars[i].position.y == y)
-      length -= cars[i].length + 1;
+      length -= cars[i].length + CAR_MIN_DISTANCE - 1;
   if (length > settings.carMaxLength)
     return settings.carMaxLength;
   return length;
@@ -380,7 +385,7 @@ void verifyConfig(const settings_t s) {
     configError(4);
   if (s.roadNumber > s.mapHeight - 2)
     configError(5);
-  if (COLS < s.mapWidth + 4 || LINES < s.mapHeight + 10)
+  if (COLS < s.mapWidth + 4 || LINES < s.mapHeight + 10 || COLS < 20)
     configError(7);
 }
 
@@ -595,9 +600,8 @@ void printMenu() {
   clear();
   mvprintw(0, 0, "FROG GAME BY FILIP BERKA");
   mvprintw(1, 0, "1. Start game");
-  mvprintw(2, 0, "2. Show recorded game");
-  mvprintw(3, 0, "3. Show leaderboard");
-  mvprintw(4, 0, "4. Exit");
+  mvprintw(2, 0, "2. Show leaderboard");
+  mvprintw(3, 0, "3. Exit");
 
 }
 
@@ -609,8 +613,10 @@ int scoreCompare(const void* score1, const void* score2) {
 
 void printLeaderboard() {
   FILE *f = fopen("SCORES.txt", "r");
+  clear();
   if (f == NULL) {
-    printf("No scores saved");
+    mvprintw(0,0,"No scores saved");
+    getch();
     return;
   }
   char count = 0;
@@ -624,10 +630,14 @@ void printLeaderboard() {
     topTen[10] = currentScore;
     qsort(topTen, 11, sizeof(score_t), scoreCompare);
   }
-
+  fclose(f);
+  if (count == 0) {
+    mvprintw(0, 0, "No scores saved");
+    getch();
+    return;
+  }
   if (count > 10)
     count = 10;
-  clear();
   for (int i = 0; i < 25; i++)
     mvaddch(1, COLS/2 - 15 + i, '-' );
   for (int i = 0; i < count; i++) {
@@ -640,6 +650,7 @@ void printLeaderboard() {
 }
 
 //-----------------control stuff------------------
+//returns 1 if player collides with specific car
 char checkCarCollision(const car_t car, const map_t map, const position_t playerPosition) {
   if (car.position.y != playerPosition.y)
     return 0;
@@ -689,21 +700,21 @@ char checkWin(const game_t game) {
   return 0;
 }
 
-
+//returns 1 if the car is supposed to stop
 char checkStop(const car_t car, const position_t playerPosition) {
   if (
     car.careful &&
-    (car.position.y - playerPosition.y < 2 && car.position.y - playerPosition.y > -2) &&
+    (car.position.y - playerPosition.y <= SEE_FROG_DISTANCE_Y && car.position.y - playerPosition.y >= -SEE_FROG_DISTANCE_Y) &&
     (
-      (car.direction == MOVES_LEFT && (car.position.x - playerPosition.x) > 0 && (car.position.x - playerPosition.x) < 4) ||
-      (car.direction == MOVES_RIGHT && (playerPosition.x - car.position.x) > 0 && (playerPosition.x - car.position.x) < 4)
+      (car.direction == MOVES_LEFT && (car.position.x - playerPosition.x) > 0 && (car.position.x - playerPosition.x) <= SEE_FROG_DISTANCE_X) ||
+      (car.direction == MOVES_RIGHT && (playerPosition.x - car.position.x) > 0 && (playerPosition.x - car.position.x) <= SEE_FROG_DISTANCE_X)
     )
   )
     return 1;
   return 0;
 }
 
-
+//returns 1 if there is any car in front of give car (prevents given car from driving into other cars)
 char checkCarAhead(const car_t car, const car_t* cars, const settings_t settings) {
   for(int i = 0; i < settings.maxCarsNumber; i++) {
     if (cars[i].dead)
@@ -714,17 +725,18 @@ char checkCarAhead(const car_t car, const car_t* cars, const settings_t settings
       continue;
     if (
       car.direction == MOVES_LEFT &&
-      (car.position.x - cars[i].position.x - cars[i].length + settings.mapWidth + 1) % settings.mapWidth < 3)
+      (car.position.x - cars[i].position.x - cars[i].length + settings.mapWidth + 1) % settings.mapWidth <= CAR_MIN_DISTANCE)
       return 1;
     if (
       car.direction == MOVES_RIGHT &&
-      (cars[i].position.x - car.position.x - cars[i].length + settings.mapWidth + 1) % settings.mapWidth < 3)
+      (cars[i].position.x - car.position.x - cars[i].length + settings.mapWidth + 1) % settings.mapWidth <= CAR_MIN_DISTANCE )
       return 1;
   }
   return 0;
 }
 
-
+//function responsible for dealing with disappearing cars reaching the border
+//returns 1 if the car completely disappeared
 char carDisappear(map_t* map, car_t* car, const settings_t settings) {
   if (
       car->behaviour == DISAPPEARING &&
@@ -804,7 +816,7 @@ void moveStork(stork_t* stork, const position_t playerPosition) {
   stork->regeneration = stork->delayBetweenMoves;
 }
 
-
+//replaces a car of a given index with a new one
 void createCar(game_t* game, const int carIndex) {
   const int yPosition = yPositionOfRoad(game->map, (int)random() % game->settings.roadNumber + 1);
   const int length = highestFittingLength(game->cars, yPosition, game->settings);
@@ -824,7 +836,7 @@ void createCar(game_t* game, const int carIndex) {
 
 
 void changeCarSpeed(car_t* car, const settings_t settings) {
-  car->delayBetweenMoves += ((int)random()&2)?5:-5;
+  car->delayBetweenMoves += ((int)random()%2)?5:-5;
   if (car->delayBetweenMoves < settings.carMinDelay)
     car->delayBetweenMoves = settings.carMinDelay;
   if (car->delayBetweenMoves > settings.carMaxDelay)
@@ -881,7 +893,7 @@ void regenerateStork(stork_t* stork) {
     stork->regeneration -= 1;
 }
 
-
+//checks if the player entered a friendly car, updates player.inCar appropriately
 void enteredCar(game_t* game) {
   for (int i = 0; i < game->settings.maxCarsNumber; i++) {
     if (game->cars[i].good)
@@ -952,7 +964,7 @@ void saveScore(const unsigned int s, FILE *f) {
   echo();
   char temp[256] = { "\0" };
   do {
-    move(LINES / 2 + 2, COLS / 2 - 10);
+    move(LINES / 2 + 2, COLS / 2 - 12);
     clrtoeol();
     scanw("%s", temp);
   }while (strlen(temp) == 0 || strlen(temp) > 15);
@@ -971,15 +983,14 @@ void gameFinished(const unsigned int score) {
     if (currentScore.score > score)
       position ++;
   clear();
-  mvprintw(LINES / 2 - 3, COLS / 2 - 10, "YOU WIN!!!");
-  mvprintw(LINES / 2 - 2, COLS / 2 - 10, "Your score: %d", score);
-  mvprintw(LINES / 2 - 1, COLS / 2 - 10, "Your place in ranking: %d", position);
-  mvprintw(LINES / 2, COLS / 2 - 10, "Input your name");
-  mvprintw(LINES / 2 + 1, COLS/2 - 10, "(max 15 characters):");
+  mvprintw(LINES / 2 - 3, COLS / 2 - 12, "YOU WIN!!!");
+  mvprintw(LINES / 2 - 2, COLS / 2 - 12, "Your score: %d", score);
+  mvprintw(LINES / 2 - 1, COLS / 2 - 12, "Your place in ranking: %d", position);
+  mvprintw(LINES / 2, COLS / 2 - 12, "Input your name");
+  mvprintw(LINES / 2 + 1, COLS/2 - 12, "(max 15 characters):");
   saveScore(score, f);
   fclose(f);
 }
-
 
 
 void freeGame(const game_t* game) {
@@ -1016,7 +1027,7 @@ void setup() {
 
 
 void startGame() {
-  nodelay(stdscr, 1);s
+  nodelay(stdscr, 1);
   const struct timespec ts = {0, 10000000};
   unsigned int level = 1, totalScore = 0;
   game_t game;
@@ -1046,12 +1057,9 @@ int main() {
       startGame();
     }
     else if (ch == '2') {
-      continue;
-    }
-    else if (ch == '3') {
       printLeaderboard();
     }
-    else if (ch == '4') {
+    else if (ch == '3') {
       clear();
       endwin();
       return 0;
