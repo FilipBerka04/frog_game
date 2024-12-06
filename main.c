@@ -22,6 +22,12 @@
 
 #define BORDER_CHAR '#'
 #define STORK_CHAR '*'
+#define GRASS_CHAR '^'
+#define ROAD_CHAR ' '
+#define FINISH_CHAR '$'
+#define OBSTACLE_CHAR '&'
+#define FROG_CHAR 'O'
+#define CAR_CHAR '='
 
 #define UP (position_t){ -1, 0 }
 #define DOWN (position_t){ 1, 0 }
@@ -191,7 +197,7 @@ unsigned int calculateScore(const game_t game) {
   return score;
 }
 
-//returns the highest length of a car that fits on a specific lane
+//returns the highest length of a car that fits on a specific lane,
 //(the highest value returned is car's max length from config even it there would be space for longer car)
 int highestFittingLength(const car_t* cars, const int y, const settings_t settings) {
   int length = settings.mapWidth - 4;
@@ -205,7 +211,7 @@ int highestFittingLength(const car_t* cars, const int y, const settings_t settin
 
 
 //************************************************
-//**********************INITS*********************
+  //**********************INITS*********************
 //************************************************
 
 
@@ -347,6 +353,9 @@ void configError(const int i) {
     case 6:
       mvprintw(0,0,"No CONFIG.txt file\n");
     break;
+    case 7:
+      mvprintw(0,0,"Terminal window too small\n");
+    break;
     default:
       mvprintw(0,0,"CONFIG ERROR\n");
   }
@@ -371,6 +380,8 @@ void verifyConfig(const settings_t s) {
     configError(4);
   if (s.roadNumber > s.mapHeight - 2)
     configError(5);
+  if (COLS < s.mapWidth + 4 || LINES < s.mapHeight + 10)
+    configError(7);
 }
 
 
@@ -380,18 +391,18 @@ settings_t readSettings() {
     configError(6);
   }
   settings_t settings;
-  fscanf(file, "MAP_HEIGHT %d\n", &settings.mapHeight); // NOLINT(*-err34-c)
-  fscanf(file, "MAP_WIDTH %d\n", &settings.mapWidth);// NOLINT(*-err34-c)
-  fscanf(file, "PLAYER_DELAY %d\n" , &settings.playerDelay);// NOLINT(*-err34-c)
-  fscanf(file, "LV1_CAR_MIN_DELAY %d\n" , &settings.carMinDelay);// NOLINT(*-err34-c)
-  fscanf(file, "LV1_CAR_MAX_DELAY %d\n" , &settings.carMaxDelay);// NOLINT(*-err34-c)
-  fscanf(file, "MIN_CARS_NUMBER %d\n", &settings.minCarsNumber);// NOLINT(*-err34-c)
-  fscanf(file, "LV1_MAX_CARS_NUMBER %d\n", &settings.maxCarsNumber);// NOLINT(*-err34-c)
-  fscanf(file, "CAR_MIN_LENGTH %d\n" , &settings.carMinLength);// NOLINT(*-err34-c)
-  fscanf(file, "CAR_MAX_LENGTH %d\n" , &settings.carMaxLength);// NOLINT(*-err34-c)
-  fscanf(file, "LV1_ROAD_NUMBER %d\n", &settings.roadNumber);// NOLINT(*-err34-c)
-  fscanf(file, "LV2_MAX_OBSTACLES_PER_LANE %d\n", &settings.maxObstacles);// NOLINT(*-err34-c)
-  fscanf(file, "LV2_MIN_OBSTACLES_PER_LANE %d\n", &settings.minObstacles);// NOLINT(*-err34-c)
+  fscanf(file, "MAP_HEIGHT %d\n", &settings.mapHeight); 
+  fscanf(file, "MAP_WIDTH %d\n", &settings.mapWidth);
+  fscanf(file, "PLAYER_DELAY %d\n" , &settings.playerDelay);
+  fscanf(file, "LV1_CAR_MIN_DELAY %d\n" , &settings.carMinDelay);
+  fscanf(file, "LV1_CAR_MAX_DELAY %d\n" , &settings.carMaxDelay);
+  fscanf(file, "MIN_CARS_NUMBER %d\n", &settings.minCarsNumber);
+  fscanf(file, "LV1_MAX_CARS_NUMBER %d\n", &settings.maxCarsNumber);
+  fscanf(file, "CAR_MIN_LENGTH %d\n" , &settings.carMinLength);
+  fscanf(file, "CAR_MAX_LENGTH %d\n" , &settings.carMaxLength);
+  fscanf(file, "LV1_ROAD_NUMBER %d\n", &settings.roadNumber);
+  fscanf(file, "LV2_MAX_OBSTACLES_PER_LANE %d\n", &settings.maxObstacles);
+  fscanf(file, "LV2_MIN_OBSTACLES_PER_LANE %d\n", &settings.minObstacles);
   fclose(file);
   verifyConfig(settings);
   return settings;
@@ -455,29 +466,27 @@ void printLane(const position_t position, const lane_t lane, const int width) {
   switch(lane) {
     case GRASS:
       attron(COLOR_PAIR(COLOR_GRASS));
-      ch = '#';
+      ch = GRASS_CHAR;
       break;
     case ROAD_LR:
-      attron(COLOR_PAIR(COLOR_ROAD));
-      ch = '>';
-      break;
     case ROAD_RL:
       attron(COLOR_PAIR(COLOR_ROAD));
-      ch = '<';
+      ch = ROAD_CHAR;
       break;
     case FINISH:
       attron(COLOR_PAIR(COLOR_FINISH));
-      ch = '=';
+      ch = FINISH_CHAR;
     default:;
   }
   for(int x = 0; x < width; x++)
     mvaddch(position.y, position.x + x, ch);
 }
 
+
 void printObstacles(const map_t map) {
   for (int i = 0; i < map.obstacleCount; i++) {
     attron(COLOR_PAIR(COLOR_OBSTACLE));
-    mvaddch(map.obstacles[i].y + map.position.y, map.obstacles[i].x + map.position.x, '&');
+    mvaddch(map.obstacles[i].y + map.position.y, map.obstacles[i].x + map.position.x, OBSTACLE_CHAR);
   }
 }
 
@@ -492,7 +501,7 @@ void printMap(const map_t map){
 
 void printPlayer(const game_t game){
   attron(COLOR_PAIR(COLOR_FROG));
-  mvaddch(game.player.position.y + game.map.position.y, game.player.position.x + game.map.position.x, 'O');
+  mvaddch(game.player.position.y + game.map.position.y, game.player.position.x + game.map.position.x, FROG_CHAR);
 }
 
 
@@ -502,7 +511,7 @@ void printCar(const car_t car, const map_t map) {
       mvaddch(
         car.position.y + map.position.y,
         (car.position.x + ((car.direction==MOVES_RIGHT)?(-i):(i)) + map.width)%map.width + map.position.x ,
-        '%');
+        CAR_CHAR);
     }
     return;
   }
@@ -515,7 +524,7 @@ void printCar(const car_t car, const map_t map) {
       car.direction == MOVES_RIGHT &&
       car.position.x - i < 0)
       break;
-    mvaddch(car.position.y + map.position.y, car.position.x + map.position.x + ((car.direction==MOVES_RIGHT)?(-i):(i)), '%');
+    mvaddch(car.position.y + map.position.y, car.position.x + map.position.x + ((car.direction==MOVES_RIGHT)?(-i):(i)), CAR_CHAR);
   }
 
 }
@@ -532,6 +541,7 @@ void printCars(const game_t game) {
     printCar(game.cars[i], game.map);
   }
 }
+
 
 void printStats(const game_t game) {
   attron(COLOR_PAIR(COLOR_TEXT));
@@ -591,9 +601,11 @@ void printMenu() {
 
 }
 
+//comparing function for qsort (sorts scores from highest to lowest)
 int scoreCompare(const void* score1, const void* score2) {
   return (int)((score_t*)score2)->score - (int)((score_t*)score1)->score;
 }
+
 
 void printLeaderboard() {
   FILE *f = fopen("SCORES.txt", "r");
@@ -604,7 +616,7 @@ void printLeaderboard() {
   char count = 0;
   score_t currentScore;
   score_t topTen[11];
-  while (fscanf(f, "%s %u", currentScore.name, &currentScore.score) != EOF) { // NOLINT(*-err34-c)
+  while (fscanf(f, "%s %u", currentScore.name, &currentScore.score) != EOF) { 
     if (count < 10) {
       topTen[count++] = currentScore;
       continue;
@@ -616,9 +628,13 @@ void printLeaderboard() {
   if (count > 10)
     count = 10;
   clear();
+  for (int i = 0; i < 25; i++)
+    mvaddch(1, COLS/2 - 15 + i, '-' );
   for (int i = 0; i < count; i++) {
-    mvprintw(i + 2, COLS/2 - 15, " | %15s | %3u |", topTen[i].name, topTen[i].score);
+    mvprintw(i + 2, COLS/2 - 15, "| %15s | %3u |", topTen[i].name, topTen[i].score);
   }
+  for (int i = 0; i < 25; i++)
+    mvaddch(2 + count, COLS/2 - 15 + i, '-' );
   refresh();
   getch();
 }
@@ -649,7 +665,7 @@ char checkCarCollision(const car_t car, const map_t map, const position_t player
   return 0;
 }
 
-
+//returns 1 if the player lost
 char checkCrash(const game_t* game) {
   if (game->player.position.x == game->stork.position.x && game->player.position.y == game->stork.position.y && !game->stork.dead)
     return 1;
@@ -837,12 +853,14 @@ void moveCars(game_t* game) {
   }
 }
 
+
 void spawnNewCars(game_t* game) {
   for (int i = 0; i < game->settings.maxCarsNumber; i++)
     if (game->cars[i].dead)
       if (!((int)random()%1000))
         createCar(game, i);
 }
+
 
 void regeneratePlayer(player_t* player){
   if(player->regeneration != 0)
@@ -857,10 +875,12 @@ void regenerateCars(const game_t *game) {
   }
 }
 
+
 void regenerateStork(stork_t* stork) {
   if(stork->regeneration != 0)
     stork->regeneration -= 1;
 }
+
 
 void enteredCar(game_t* game) {
   for (int i = 0; i < game->settings.maxCarsNumber; i++) {
@@ -926,30 +946,38 @@ void update(game_t *game) {
 }
 
 
-void saveScore(score_t s) {
-  FILE *f = fopen("SCORES.txt", "a+");
-  fprintf(f, "%s %u\n", s.name, s.score);
-  fclose(f);
+void saveScore(const unsigned int s, FILE *f) {
+  nodelay(stdscr, 0);
+  curs_set(1);
+  echo();
+  char temp[256] = { "\0" };
+  do {
+    move(LINES / 2 + 2, COLS / 2 - 10);
+    clrtoeol();
+    scanw("%s", temp);
+  }while (strlen(temp) == 0 || strlen(temp) > 15);
+  fprintf(f, "%s %u\n", temp, s);
+  nodelay(stdscr, 1);
+  curs_set(0);
+  noecho();
 }
 
 
 void gameFinished(const unsigned int score) {
+  FILE *f = fopen("SCORES.txt", "a+");
+  int position = 1;
+  score_t currentScore;
+  while (fscanf(f, "%s %u", currentScore.name, &currentScore.score) != EOF) 
+    if (currentScore.score > score)
+      position ++;
   clear();
   mvprintw(LINES / 2 - 3, COLS / 2 - 10, "YOU WIN!!!");
   mvprintw(LINES / 2 - 2, COLS / 2 - 10, "Your score: %d", score);
-  mvprintw(LINES / 2 - 1, COLS / 2 - 10, "Input your name");
-  mvprintw(LINES / 2 , COLS/2 - 10, "(max 15 characters):");
-  move(LINES / 2 + 1, COLS / 2 - 10);
-  nodelay(stdscr, 0);
-  curs_set(1);
-  echo();
-  score_t s;
-  s.score = score;
-  scanw("%s", s.name);
-  nodelay(stdscr, 1);
-  curs_set(0);
-  noecho();
-  saveScore(s);
+  mvprintw(LINES / 2 - 1, COLS / 2 - 10, "Your place in ranking: %d", position);
+  mvprintw(LINES / 2, COLS / 2 - 10, "Input your name");
+  mvprintw(LINES / 2 + 1, COLS/2 - 10, "(max 15 characters):");
+  saveScore(score, f);
+  fclose(f);
 }
 
 
@@ -988,7 +1016,7 @@ void setup() {
 
 
 void startGame() {
-  nodelay(stdscr, 1);
+  nodelay(stdscr, 1);s
   const struct timespec ts = {0, 10000000};
   unsigned int level = 1, totalScore = 0;
   game_t game;
